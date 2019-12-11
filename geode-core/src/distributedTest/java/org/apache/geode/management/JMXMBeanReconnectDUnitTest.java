@@ -15,17 +15,17 @@
 
 package org.apache.geode.management;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.stream.Collectors.toList;
 import static org.apache.geode.management.ManagementService.getExistingManagementService;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
-import static org.apache.geode.test.dunit.internal.JUnit4DistributedTestCase.getBlackboard;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
 import javax.management.ObjectName;
@@ -39,6 +39,7 @@ import org.junit.experimental.categories.Category;
 import org.apache.geode.cache.Cache;
 import org.apache.geode.management.internal.SystemManagementService;
 import org.apache.geode.test.awaitility.GeodeAwaitility;
+import org.apache.geode.test.dunit.DUnitBlackboard;
 import org.apache.geode.test.dunit.rules.ClusterStartupRule;
 import org.apache.geode.test.dunit.rules.MemberVM;
 import org.apache.geode.test.junit.categories.JMXTest;
@@ -47,7 +48,7 @@ import org.apache.geode.test.junit.rules.GfshCommandRule;
 import org.apache.geode.test.junit.rules.MBeanServerConnectionRule;
 
 @Category({JMXTest.class})
-public class JMXMBeanReconnectDUnitTest {
+public class JMXMBeanReconnectDUnitTest implements Serializable {
   private static final String REGION_PATH = "/test-region-1";
   private static final String RECONNECT_MAILBOX = "reconnectReady";
   private static final int SERVER_COUNT = 2;
@@ -56,13 +57,16 @@ public class JMXMBeanReconnectDUnitTest {
   private static final int NUM_SERVER_BEANS = 3;
   private static final long TIMEOUT = GeodeAwaitility.getTimeout().getValueInMS();
 
-  private MemberVM locator1, locator2, server1;
+  private static volatile DUnitBlackboard blackboard;
+
+  private MemberVM locator0;
+  private MemberVM server0;
 
   @Rule
-  public ClusterStartupRule lsRule = new ClusterStartupRule();
+  public ClusterStartupRule clusterStartupRule = new ClusterStartupRule();
 
   @Rule
-  public GfshCommandRule gfsh = new GfshCommandRule();
+  public GfshCommandRule gfshCommandRule = new GfshCommandRule();
 
   private MBeanServerConnectionRule jmxConToLocator1;
   private MBeanServerConnectionRule jmxConToLocator2;
@@ -72,23 +76,23 @@ public class JMXMBeanReconnectDUnitTest {
 
   @Before
   public void before() throws Exception {
-    locator1 = lsRule.startLocatorVM(0);
-    locator2 = lsRule.startLocatorVM(1, locator1.getPort());
+    locator0 = clusterStartupRule.startLocatorVM(0);
+    MemberVM locator1 = clusterStartupRule.startLocatorVM(1, locator0.getPort());
 
-    server1 = lsRule.startServerVM(2, locator1.getPort());
+    server0 = clusterStartupRule.startServerVM(2, locator0.getPort());
     // start an extra server to have more MBeans, but we don't need to use it in these tests
-    lsRule.startServerVM(3, locator1.getPort());
+    clusterStartupRule.startServerVM(3, locator0.getPort());
 
-    gfsh.connectAndVerify(locator1);
-    gfsh.executeAndAssertThat("create region --type=REPLICATE --name=" + REGION_PATH
+    gfshCommandRule.connectAndVerify(locator0);
+    gfshCommandRule.executeAndAssertThat("create region --type=REPLICATE --name=" + REGION_PATH
         + " --enable-statistics=true").statusIsSuccess();
 
-    locator1.waitUntilRegionIsReadyOnExactlyThisManyServers(REGION_PATH, SERVER_COUNT);
+    locator0.waitUntilRegionIsReadyOnExactlyThisManyServers(REGION_PATH, SERVER_COUNT);
 
     jmxConToLocator1 = new MBeanServerConnectionRule();
-    jmxConToLocator1.connect(locator1.getJmxPort());
+    jmxConToLocator1.connect(locator0.getJmxPort());
     jmxConToLocator2 = new MBeanServerConnectionRule();
-    jmxConToLocator2.connect(locator2.getJmxPort());
+    jmxConToLocator2.connect(locator1.getJmxPort());
 
     await("Locators must agree on the state of the system")
         .untilAsserted(() -> assertThat(jmxConToLocator1.getGemfireFederatedBeans())
@@ -100,6 +104,7 @@ public class JMXMBeanReconnectDUnitTest {
   public void after() throws Exception {
     jmxConToLocator1.disconnect();
     jmxConToLocator2.disconnect();
+    blackboard = null;
   }
 
   /**
@@ -107,19 +112,22 @@ public class JMXMBeanReconnectDUnitTest {
    */
   @Test
   public void testLocalBeans_MaintainServerAndCrashLocator() {
-    List<String> initialServerBeans = server1.invoke(() -> getLocalCanonicalBeanNames());
+    List<String> initialServerBeans =
+        server0.invoke(JMXMBeanReconnectDUnitTest::getLocalCanonicalBeanNames);
     assertThat(initialServerBeans).hasSize(NUM_SERVER_BEANS);
 
-    locator1.forceDisconnect();
+    locator0.forceDisconnect();
 
-    List<String> intermediateServerBeans = server1.invoke(() -> getLocalCanonicalBeanNames());
+    List<String> intermediateServerBeans = server0.invoke(
+        JMXMBeanReconnectDUnitTest::getLocalCanonicalBeanNames);
     assertThat(intermediateServerBeans)
         .containsExactlyElementsOf(initialServerBeans)
         .hasSize(NUM_SERVER_BEANS);
 
-    locator1.waitTilFullyReconnected();
+    locator0.waitTilFullyReconnected();
 
-    List<String> finalServerBeans = server1.invoke(() -> getLocalCanonicalBeanNames());
+    List<String> finalServerBeans = server0.invoke(
+        JMXMBeanReconnectDUnitTest::getLocalCanonicalBeanNames);
     assertThat(finalServerBeans)
         .containsExactlyElementsOf(initialServerBeans)
         .hasSize(NUM_SERVER_BEANS);
@@ -130,20 +138,23 @@ public class JMXMBeanReconnectDUnitTest {
    */
   @Test
   public void testLocalBeans_MaintainLocatorAndCrashServer() {
-    List<String> initialLocatorBeans = locator1.invoke(() -> getLocalCanonicalBeanNames());
+    List<String> initialLocatorBeans = locator0.invoke(
+        JMXMBeanReconnectDUnitTest::getLocalCanonicalBeanNames);
     assertThat(initialLocatorBeans).hasSize(NUM_LOCATOR_BEANS);
 
-    server1.forceDisconnect();
+    server0.forceDisconnect();
 
-    List<String> intermediateLocatorBeans = locator1.invoke(() -> getLocalCanonicalBeanNames());
+    List<String> intermediateLocatorBeans = locator0.invoke(
+        JMXMBeanReconnectDUnitTest::getLocalCanonicalBeanNames);
     assertThat(intermediateLocatorBeans)
         .containsExactlyElementsOf(initialLocatorBeans)
         .hasSize(NUM_LOCATOR_BEANS);
 
-    server1.waitTilFullyReconnected();
-    locator1.waitUntilRegionIsReadyOnExactlyThisManyServers(REGION_PATH, SERVER_COUNT);
+    server0.waitTilFullyReconnected();
+    locator0.waitUntilRegionIsReadyOnExactlyThisManyServers(REGION_PATH, SERVER_COUNT);
 
-    List<String> finalLocatorBeans = locator1.invoke(() -> getLocalCanonicalBeanNames());
+    List<String> finalLocatorBeans = locator0.invoke(
+        JMXMBeanReconnectDUnitTest::getLocalCanonicalBeanNames);
     assertThat(finalLocatorBeans)
         .containsExactlyElementsOf(initialLocatorBeans)
         .hasSize(NUM_LOCATOR_BEANS);
@@ -167,7 +178,7 @@ public class JMXMBeanReconnectDUnitTest {
         .filter(excludingBeansFor("locator-0")).collect(toList());
 
     // crash the locator
-    locator1.forceDisconnect(TIMEOUT, TimeUnit.MILLISECONDS, RECONNECT_MAILBOX);
+    locator0.forceDisconnect(TIMEOUT, MILLISECONDS, RECONNECT_MAILBOX);
 
     // wait for the locator's crash to federate to the remaining locator
     List<ObjectName> intermediateL2Beans = new ArrayList<>();
@@ -181,7 +192,7 @@ public class JMXMBeanReconnectDUnitTest {
     });
 
     // allow locator 1 to start reconnecting
-    locator1.invoke(() -> getBlackboard().setMailbox(RECONNECT_MAILBOX, true));
+    locator0.invoke(() -> getBlackboard().setMailbox(RECONNECT_MAILBOX, true));
 
     // wait for the locator's restart to federate to the other locator
     List<ObjectName> finalL2Beans = new ArrayList<>();
@@ -217,7 +228,7 @@ public class JMXMBeanReconnectDUnitTest {
         .filter(excludingBeansFor("server-2")).collect(toList());
 
     // crash the server
-    server1.forceDisconnect(TIMEOUT, TimeUnit.MILLISECONDS, RECONNECT_MAILBOX);
+    server0.forceDisconnect(TIMEOUT, MILLISECONDS, RECONNECT_MAILBOX);
 
     // wait for the server's crash to federate to the locators
     List<ObjectName> intermediateL1Beans = new ArrayList<>();
@@ -240,7 +251,7 @@ public class JMXMBeanReconnectDUnitTest {
     });
 
     // allow the server to start reconnecting
-    server1.invoke(() -> getBlackboard().setMailbox(RECONNECT_MAILBOX, true));
+    server0.invoke(() -> getBlackboard().setMailbox(RECONNECT_MAILBOX, true));
 
     // wait for the server's restart to federate to the locators and check final state
     List<ObjectName> finalL1Beans = new ArrayList<>();
@@ -273,5 +284,12 @@ public class JMXMBeanReconnectDUnitTest {
 
   private static Predicate<ObjectName> excludingBeansFor(String memberName) {
     return b -> !b.getCanonicalName().contains("member=" + memberName);
+  }
+
+  private static DUnitBlackboard getBlackboard() {
+    if (blackboard == null) {
+      blackboard = new DUnitBlackboard();
+    }
+    return blackboard;
   }
 }
