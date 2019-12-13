@@ -55,7 +55,7 @@ public class JMXMBeanReconnectDUnitTest implements Serializable {
   private static final int NUM_REMOTE_BEANS = 19;
   private static final int NUM_LOCATOR_BEANS = 8;
   private static final int NUM_SERVER_BEANS = 3;
-  private static final long TIMEOUT = GeodeAwaitility.getTimeout().getValueInMS();
+  private static final long TIMEOUT_MILLIS = GeodeAwaitility.getTimeout().getValueInMS();
 
   private static volatile DUnitBlackboard blackboard;
 
@@ -178,7 +178,7 @@ public class JMXMBeanReconnectDUnitTest implements Serializable {
         .filter(excludingBeansFor("locator-0")).collect(toList());
 
     // crash the locator
-    locator0.forceDisconnect(TIMEOUT, MILLISECONDS, RECONNECT_MAILBOX);
+    locator0.forceDisconnect(TIMEOUT_MILLIS, MILLISECONDS, RECONNECT_MAILBOX);
 
     // wait for the locator's crash to federate to the remaining locator
     List<ObjectName> intermediateL2Beans = new ArrayList<>();
@@ -228,7 +228,7 @@ public class JMXMBeanReconnectDUnitTest implements Serializable {
         .filter(excludingBeansFor("server-2")).collect(toList());
 
     // crash the server
-    server0.forceDisconnect(TIMEOUT, MILLISECONDS, RECONNECT_MAILBOX);
+    server0.forceDisconnect(TIMEOUT_MILLIS, MILLISECONDS, RECONNECT_MAILBOX);
 
     // wait for the server's crash to federate to the locators
     List<ObjectName> intermediateL1Beans = new ArrayList<>();
