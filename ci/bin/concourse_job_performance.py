@@ -30,15 +30,12 @@ from urllib.parse import urlparse
 
 import requests
 import sseclient
-from colors import color
 from tqdm import tqdm
 import yaml
 
 TEST_FAILURE_REGEX = re.compile('(\S+)\s*>\s*(\S+).*FAILED')
 
-YELLOW_STARS_SEPARATOR = color("***********************************************************************************",
-                               fg='yellow')
-
+YELLOW_STARS_SEPARATOR = "***********************************************************************************"
 
 class SingleFailure:
     """Information container class for detected failures."""
@@ -174,7 +171,7 @@ def print_results(n_builds_analyzed, expected_failed_builds, long_list_of_failur
     if long_list_of_failures or expected_failed_builds:
         print_failures(n_builds_analyzed, expected_failed_builds, long_list_of_failures, url, failure_url_base)
     else:
-        print(color("No failures! 100% success rate", fg='green', style='bold'))
+        print("No failures! 100% success rate")
 
 
 def print_failures(completed, expected_failed_builds, long_list_of_failures, url, failure_url_base):
@@ -250,11 +247,11 @@ def print_list_of_failures(long_list_of_failures, url):
 
 def success_rate_string(identifier, failure_count, total_count):
     """Only prints percentage if total_count is not None"""
-    return " ".join((color(f"{identifier}: ", fg='cyan'),
-                     color(f"{failure_count} failures", fg='red'),
+    return " ".join((f"{identifier}: ",
+                     f"{failure_count} failures",
                      ""
                      if total_count is None else
-                     color(f"({((total_count - failure_count) / total_count) * 100:6.3f}% success rate)", fg='blue')))
+                     f"({((total_count - failure_count) / total_count) * 100:6.3f}% success rate)"))
 
 
 def print_success_rate_and_expectation_warning(completed, expected_failed_builds, long_list_of_test_failures,
@@ -275,18 +272,15 @@ def print_success_rate_and_expectation_warning(completed, expected_failed_builds
     rate = (completed - test_failure_count) * 100 / completed
 
     print(" Overall build success rate:",
-          color(f"{rate:.5f}% ({completed - test_failure_count} of {completed})", fg='blue'))
+          f"{rate:.5f}% ({completed - test_failure_count} of {completed})")
 
     if build_failure_not_test_failure:
-        print(color(f'>>>>> {build_failure_count} jobs "went red," '
-                    f'but only {test_failure_count} were detected test failures. <<<<<',
-                    fg='red', style='bold'))
+        print(f'>>>>> {build_failure_count} jobs "went red," 'f'but only {test_failure_count} were detected test failures. <<<<<')
         print(f"Maybe you have some timeouts or other issues please manually inspect the following builds:")
         for build_failure in build_failure_not_test_failure:
             print(f"  {failure_url_base}{build_failure}")
     if test_failure_not_build_failure:
-        print(color(f'>>>>> OH NO!  A test failure was detected, but the job "went green" anyway!! <<<<',
-                    fg='red', style='bold'))
+        print(f'>>>>> OH NO!  A test failure was detected, but the job "went green" anyway!! <<<<')
         print(f"Please manually inspect the following builds:")
         for test_failure in test_failure_not_build_failure:
             print(f"  {failure_url_base}{test_failure}")
@@ -414,7 +408,7 @@ if __name__ == '__main__':
     # Validation
     concourse_url = urlparse(args.url)
     if not concourse_url.scheme or not concourse_url.netloc or concourse_url.path != '':
-        print(color("Url {} seems to be invalid. Please check your arguments.".format(args.url), fg='red'))
+        print("Url {} seems to be invalid. Please check your arguments.".format(args.url))
         exit(1)
 
     # # Examination limit should be less than fetch limit, or either/both should be set to 0 for full analysis
