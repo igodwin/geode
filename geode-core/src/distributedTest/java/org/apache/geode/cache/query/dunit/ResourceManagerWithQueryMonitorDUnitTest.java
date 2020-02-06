@@ -17,7 +17,8 @@ package org.apache.geode.cache.query.dunit;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
-import static org.apache.geode.internal.cache.control.MemoryThresholds.MemoryState.NORMAL;
+import static org.apache.geode.internal.cache.control.MemoryThresholds.MemoryState.EVICTION_DISABLED;
+import static org.apache.geode.internal.cache.control.MemoryThresholds.MemoryState.EVICTION_DISABLED_CRITICAL;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
@@ -63,7 +64,7 @@ import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.control.HeapMemoryMonitor;
 import org.apache.geode.internal.cache.control.InternalResourceManager;
 import org.apache.geode.internal.cache.control.InternalResourceManager.ResourceType;
-import org.apache.geode.internal.cache.control.MemoryEvent;
+import org.apache.geode.internal.cache.control.MemoryThresholds;
 import org.apache.geode.internal.cache.control.ResourceListener;
 import org.apache.geode.internal.cache.control.TestMemoryThresholdListener;
 import org.apache.geode.logging.internal.log4j.api.LogService;
@@ -94,6 +95,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
     });
     IgnoredException.addIgnoredException("above heap critical threshold");
     IgnoredException.addIgnoredException("below heap critical threshold");
+    countDownLatch = new CountDownLatch(1);
   }
 
   @Override
@@ -112,7 +114,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       // Reset CRITICAL_UP by informing all that heap usage is now 1 byte (0 would disable).
       irm.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
       Set<ResourceListener> listeners = irm.getResourceListeners(ResourceType.HEAP_MEMORY);
-      for (ResourceListener<MemoryEvent> l : listeners) {
+      for (ResourceListener l : listeners) {
         if (l instanceof TestMemoryThresholdListener) {
           ((TestMemoryThresholdListener) l).resetThresholdCalls();
         }
@@ -288,16 +290,10 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       doTestCriticalHeapAndQueryTimeout(server, client, disabledQueryMonitorForLowMem,
           queryTimeout, hitCriticalThreshold);
 
-      // Pause for a second and then let's recover
-      try {
-        Thread.sleep(1000);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      }
-
       // Recover from critical heap
       if (hitCriticalThreshold) {
         vmRecoversFromCriticalHeap(server);
+        await().until(() -> vmCheckCritcalHeap(server) == EVICTION_DISABLED);
       }
 
       // Check to see if query execution is ok under "normal" or "healthy" conditions
@@ -319,6 +315,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       // Recover from critical heap
       if (hitCriticalThreshold) {
         vmRecoversFromCriticalHeap(server);
+        await().until(() -> vmCheckCritcalHeap(server) == EVICTION_DISABLED);
       }
     } finally {
       stopServer(server);
@@ -529,6 +526,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
 
       doTestCriticalHeapAndQueryTimeout(server1, client, false,
           -1, true);
+
       verifyRejectedObjects(server1);
       // Pause for a second and then let's recover
       try {
@@ -539,6 +537,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
 
       // Recover from critical heap
       vmRecoversFromCriticalHeap(server1);
+      await().until(() -> vmCheckCritcalHeap(server1) == EVICTION_DISABLED);
 
       // Check to see if query execution is ok under "normal" or "healthy" conditions
       client.invoke("Executing query when system is 'Normal'", () -> {
@@ -559,11 +558,15 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       verifyRejectedObjects(server1);
       // Recover from critical heap
       vmRecoversFromCriticalHeap(server1);
+      await().until(() -> vmCheckCritcalHeap(server1) == EVICTION_DISABLED);
+
     } finally {
       stopServer(server1);
       stopServer(server2);
     }
   }
+
+  private static CountDownLatch countDownLatch;
 
   // Executes the query on the server with the RM and QM configured
   private void doCriticalMemoryHitTestOnServer(boolean createPR,
@@ -675,7 +678,14 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
         .addResourceListener(event -> logger.info("MLH resource event " + event));
 
     AsyncInvocation queryExecution = invokeClientQuery(client,
-        disabledQueryMonitorForLowMem, queryTimeout, hitCriticalThreshold);
+        disabledQueryMonitorForLowMem, queryTimeout, hitCriticalThreshold, VM.getVM(-1));
+
+    try {
+      countDownLatch.await();
+      logger.info("MLH: Finished awaiting");
+    } catch (InterruptedException e) {
+      e.printStackTrace();
+    }
 
     try {
       Thread.sleep(1000);
@@ -685,14 +695,11 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
     // We simulate a low memory/critical heap percentage hit
     if (hitCriticalThreshold) {
       vmHitsCriticalHeap(server);
+      await().until(() -> vmCheckCritcalHeap(server) == EVICTION_DISABLED_CRITICAL);
     }
 
     // Pause until query would time out if low memory was ignored
-    try {
-      Thread.sleep(MAX_TEST_QUERY_TIMEOUT);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
+    letTimeoutExpire();
 
     // release the hook to have the query throw either a low memory or query timeout
     // unless otherwise configured
@@ -703,6 +710,14 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
     } catch (Throwable e) {
       e.printStackTrace();
       fail("queryExecution.getResult() threw Exception " + e.toString());
+    }
+  }
+
+  private void letTimeoutExpire() {
+    try {
+      Thread.sleep(MAX_TEST_QUERY_TIMEOUT);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
   }
 
@@ -773,12 +788,16 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
   private AsyncInvocation invokeClientQuery(VM client,
       final boolean disabledQueryMonitorForLowMem,
       final int queryTimeout,
-      final boolean hitCriticalThreshold) {
+      final boolean hitCriticalThreshold,
+      VM callbackToVM) {
     return client.invokeAsync("execute query from client", () -> {
       QueryService qs = null;
       try {
         qs = getCache().getQueryService();
         Query query = qs.newQuery("Select * From /" + "portfolios");
+        callbackToVM
+            .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.countDownLatch.countDown());
+        logger.info("MLH Counted down latch");
         query.execute();
 
         if (disabledQueryMonitorForLowMem) {
@@ -896,6 +915,14 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       InternalResourceManager resourceManager =
           (InternalResourceManager) getCache().getResourceManager();
       resourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
+    });
+  }
+
+  private MemoryThresholds.MemoryState vmCheckCritcalHeap(VM vm) {
+    return vm.invoke("vm hits critical heap", () -> {
+      InternalResourceManager resourceManager =
+          (InternalResourceManager) getCache().getResourceManager();
+      return resourceManager.getHeapMonitor().getState();
     });
   }
 
