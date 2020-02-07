@@ -685,12 +685,12 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
     } catch (InterruptedException e) {
       e.printStackTrace();
     }
-
-    // try {
-    // Thread.sleep(1000);
-    // } catch (InterruptedException e) {
-    // Thread.currentThread().interrupt();
-    // }
+    // comment this sleep out...
+    try {
+      Thread.sleep(1000);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
     // We simulate a low memory/critical heap percentage hit
     if (hitCriticalThreshold) {
       vmHitsCriticalHeap(server);
