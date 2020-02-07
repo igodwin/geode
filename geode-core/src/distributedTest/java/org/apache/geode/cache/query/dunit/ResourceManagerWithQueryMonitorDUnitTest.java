@@ -271,7 +271,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       // remove from here to ....
       AsyncInvocation queryExecution1 = executeQueryOnClient(client);
 
-      // // comment this sleep out...
+      // comment this sleep out...
       Thread.sleep(1000);
 
       // We simulate a low memory/critical heap percentage hit
@@ -399,12 +399,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       });
 
       verifyRejectedObjects(server1);
-      // Pause for a second and then let's recover
-      try {
-        Thread.sleep(1000);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      }
 
       // Recover from critical heap
       vmRecoversFromCriticalHeap(server1);
@@ -461,12 +455,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       });
 
       verifyRejectedObjects(server1);
-      // Pause for a second and then let's recover
-      try {
-        Thread.sleep(1000);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      }
 
       // Recover from critical heap
       vmRecoversFromCriticalHeap(server1);
@@ -653,12 +641,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       doTestCriticalHeapAndQueryTimeout(server, server, disabledQueryMonitorForLowMem,
           queryTimeout, hitCriticalThreshold);
 
-      // Pause for a second and then let's recover
-      try {
-        Thread.sleep(1000);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-      }
 
       // Recover from critical heap
       if (hitCriticalThreshold) {
@@ -716,13 +698,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
     } catch (InterruptedException e) {
       e.printStackTrace();
     }
-    // // comment this sleep out...
-    // try {
-    // Thread.sleep(1000);
-    // } catch (InterruptedException e) {
-    // Thread.currentThread().interrupt();
-    // }
-    //
+
     // We simulate a low memory/critical heap percentage hit
     if (hitCriticalThreshold) {
       vmHitsCriticalHeap(server);
