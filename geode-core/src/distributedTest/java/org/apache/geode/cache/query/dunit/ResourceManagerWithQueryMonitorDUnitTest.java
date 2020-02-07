@@ -267,65 +267,19 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       server1.invoke("create latch test Hook", () -> {
         DefaultQuery.testHook = getPauseHook(true, controller);
       });
+
       // remove from here to ....
-      AsyncInvocation queryExecution1 = client.invokeAsync("execute query from client", () -> {
-        try {
-          Query query1 = getCache().getQueryService().newQuery("Select * From /" + "portfolios");
-          controller
-              .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
-                  .countDown());
-          logger.info("MLH Counted down latch");
-          query1.execute();
-
-          throw new CacheException("Exception should have been thrown due to low memory") {};
-        } catch (Exception e2) {
-          handleException(e2, true, false, -1);
-        }
-        return 0;
-      });
-
-      criticalMemoryCountDownLatch.await();
-      logger.info("MLH: Finished awaiting");
+      AsyncInvocation queryExecution1 = executeQueryOnClient(client);
 
       // // comment this sleep out...
       Thread.sleep(1000);
 
       // We simulate a low memory/critical heap percentage hit
-      server1.invoke("vm hits critical heap and counts down latch.", () -> {
-        InternalResourceManager resourceManager =
-            (InternalResourceManager) getCache().getResourceManager();
-        resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
-
-        await()
-            .until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED_CRITICAL);
-
-        // Pause until query would time out if low memory was ignored
-        letTimeoutExpire();
-
-        // release the hook to have the query throw either a low memory or query timeout
-        // unless otherwise configured
-
-        PauseTestHook hook = (PauseTestHook) DefaultQuery.testHook;
-        hook.countDown();
-      });
+      setHeapToCriticalAndReleaseLatch(server1);
 
       assertThat(queryExecution1.get(60, SECONDS)).isEqualTo(0);
 
-      server1.invoke("verify dropped objects", () -> {
-
-        if (DefaultQuery.testHook instanceof RejectedObjectsInterface) {
-          RejectedObjectsInterface rejectedObjectsInterface =
-              (RejectedObjectsInterface) DefaultQuery.testHook;
-          await()
-              .untilAsserted(() -> assertThat(rejectedObjectsInterface.rejectedObjects).isTrue());
-        }
-
-        // // Recover from critical heap
-        InternalResourceManager resourceManager =
-            (InternalResourceManager) getCache().getResourceManager();
-        resourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
-        await().until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED);
-      });
+      verifyDroppedObjectsAndSetHeapToNormal(server1);
 
       // to here....
 
@@ -342,64 +296,67 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       });
 
       // We simulate a low memory/critical heap percentage hit
+      setHeapToCriticalAndReleaseLatch(server1);
 
-      server1.invoke("vm hits critical heap and countdown hook ", () -> {
-        InternalResourceManager resourceManager =
-            (InternalResourceManager) getCache().getResourceManager();
-        resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
-
-        await()
-            .until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED_CRITICAL);
-
-        // Pause until query would time out if low memory was ignored
-        letTimeoutExpire();
-
-        // release the hook to have the query throw either a low memory or query timeout
-        // unless otherwise configured
-
-        PauseTestHook hook = (PauseTestHook) DefaultQuery.testHook;
-        hook.countDown();
-      });
-
-      AsyncInvocation queryExecution = client.invokeAsync("execute query from client", () -> {
-        try {
-          Query query = getCache().getQueryService().newQuery("Select * From /" + "portfolios");
-          controller
-              .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
-                  .countDown());
-          logger.info("MLH Counted down latch");
-          query.execute();
-
-          throw new CacheException("Exception should have been thrown due to low memory") {};
-        } catch (Exception e1) {
-          handleException(e1, true, false, -1);
-        }
-        return 0;
-      });
-
-      criticalMemoryCountDownLatch.await();
+      AsyncInvocation queryExecution = executeQueryOnClient(client);
 
       assertThat(queryExecution.get(60, SECONDS)).isEqualTo(0);
 
-      server1.invoke("verify dropped objects", () -> {
-        if (DefaultQuery.testHook instanceof RejectedObjectsInterface) {
-          RejectedObjectsInterface rejectedObjectsInterface =
-              (RejectedObjectsInterface) DefaultQuery.testHook;
-          await()
-              .untilAsserted(() -> assertThat(rejectedObjectsInterface.rejectedObjects).isTrue());
-        }
-
-        InternalResourceManager resourceManager =
-            (InternalResourceManager) getCache().getResourceManager();
-        resourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
-
-        await().until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED);
-      });
+      verifyDroppedObjectsAndSetHeapToNormal(server1);
 
     } finally {
       stopServer(server1);
       stopServer(server2);
     }
+  }
+
+  private AsyncInvocation executeQueryOnClient(VM client) {
+    return client.invokeAsync("execute query from client", () -> {
+      try {
+        Query query1 = getCache().getQueryService().newQuery("Select * From /" + "portfolios");
+        query1.execute();
+
+        throw new CacheException("Exception should have been thrown due to low memory") {};
+      } catch (Exception e2) {
+        handleException(e2, true, false, -1);
+      }
+      return 0;
+    });
+  }
+
+  private void setHeapToCriticalAndReleaseLatch(VM server1) {
+    server1.invoke("vm hits critical heap and counts down latch.", () -> {
+      InternalResourceManager resourceManager =
+          (InternalResourceManager) getCache().getResourceManager();
+      resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
+
+      await()
+          .until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED_CRITICAL);
+
+      Thread.sleep(MAX_TEST_QUERY_TIMEOUT);
+
+      // release the hook to have the query throw either a low memory or query timeout
+      // unless otherwise configured
+      PauseTestHook hook = (PauseTestHook) DefaultQuery.testHook;
+      hook.countDown();
+    });
+  }
+
+  private void verifyDroppedObjectsAndSetHeapToNormal(VM server1) {
+    server1.invoke("verify dropped objects", () -> {
+      if (DefaultQuery.testHook instanceof RejectedObjectsInterface) {
+        RejectedObjectsInterface rejectedObjectsInterface =
+            (RejectedObjectsInterface) DefaultQuery.testHook;
+        await()
+            .untilAsserted(() -> assertThat(rejectedObjectsInterface.rejectedObjects).isTrue());
+      }
+
+      InternalResourceManager resourceManager =
+          (InternalResourceManager) getCache().getResourceManager();
+      resourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
+
+      await().until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED);
+    });
   }
 
   @Test
@@ -1215,9 +1172,10 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
                 (InternalResourceManager) getCache().getResourceManager();
             resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
             await().until(() -> vmCheckCritcalHeap() == EVICTION_DISABLED_CRITICAL);
-            // callbackVM
-            // .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
-            // .countDown());
+
+            callbackVM
+                .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
+                    .countDown());
             logger.info("MLH Counted down latch");
           }
           break;
