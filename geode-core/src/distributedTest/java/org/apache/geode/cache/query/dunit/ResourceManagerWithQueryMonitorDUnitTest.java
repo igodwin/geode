@@ -271,7 +271,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       // remove from here to ....
       AsyncInvocation queryExecution1 = executeQueryOnClient(client);
 
-      // comment this sleep out...
+      // Force the query to timeout
       Thread.sleep(1000);
 
       // We simulate a low memory/critical heap percentage hit
@@ -722,7 +722,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
 
   private void letTimeoutExpire() {
     try {
-      Thread.sleep(MAX_TEST_QUERY_TIMEOUT);
+      Thread.sleep(MAX_TEST_QUERY_TIMEOUT * 2);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
