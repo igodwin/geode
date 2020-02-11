@@ -722,7 +722,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
 
   private void letTimeoutExpire() {
     try {
-      Thread.sleep(MAX_TEST_QUERY_TIMEOUT * 2);
+      Thread.sleep(MAX_TEST_QUERY_TIMEOUT);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     }
