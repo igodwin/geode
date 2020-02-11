@@ -272,7 +272,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
       AsyncInvocation queryExecution1 = executeQueryOnClient(client);
 
       // Force the query to timeout
-      Thread.sleep(1000);
+      Thread.sleep(2000);
 
       // We simulate a low memory/critical heap percentage hit
       setHeapToCriticalAndReleaseLatch(server1);
@@ -1089,6 +1089,8 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
     String message = e.getMessage();
     // -1 needs to be matched due to client/server set up, BaseCommand uses the
     // MAX_QUERY_EXECUTION_TIME and not the testMaxQueryExecutionTime
+
+    logger.info("MLH exception was ", e);
     return (message.contains("The QueryMonitor thread may be sleeping longer than")
         || message.contains("Query execution canceled after exceeding max execution time")
         || message.contains(
@@ -1142,7 +1144,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
           }
           break;
         case BEFORE_ADD_OR_UPDATE_MAPPING_OR_DESERIALIZING_NTH_STREAMINGOPERATION:
-          logger.info("MLH calling modded test hook");
           if (hitCriticalThreshold && hitOnce.compareAndSet(false, true)) {
             InternalResourceManager resourceManager =
                 (InternalResourceManager) getCache().getResourceManager();
@@ -1152,7 +1153,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
             callbackVM
                 .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
                     .countDown());
-            logger.info("MLH Counted down latch");
           }
           break;
         case LOW_MEMORY_WHEN_DESERIALIZING_STREAMINGOPERATION:
@@ -1194,7 +1194,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
           break;
         case BEFORE_ADD_OR_UPDATE_MAPPING_OR_DESERIALIZING_NTH_STREAMINGOPERATION:
           if (count++ == numObjectsBeforeCancel) {
-            logger.info("MLH calling modded test hook");
             if (hitCriticalThreshold && hitOnce.compareAndSet(false, true)) {
               InternalResourceManager resourceManager =
                   (InternalResourceManager) getCache().getResourceManager();
@@ -1204,7 +1203,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest extends ClientServerTestCa
                   .invoke(
                       () -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
                           .countDown());
-              logger.info("MLH Counted down latch");
             }
             triggeredOOME = true;
           }
