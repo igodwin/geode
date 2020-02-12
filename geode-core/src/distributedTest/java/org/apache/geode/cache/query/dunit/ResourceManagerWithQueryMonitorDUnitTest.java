@@ -30,7 +30,6 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.logging.log4j.Logger;
 import org.junit.After;
@@ -40,10 +39,8 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.AttributesFactory;
-import org.apache.geode.cache.Cache;
 import org.apache.geode.cache.CacheException;
 import org.apache.geode.cache.DataPolicy;
-import org.apache.geode.cache.LoaderHelper;
 import org.apache.geode.cache.PartitionAttributesFactory;
 import org.apache.geode.cache.Region;
 import org.apache.geode.cache.RegionAttributes;
@@ -54,7 +51,6 @@ import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolFactory;
 import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache.client.ServerOperationException;
-import org.apache.geode.cache.client.internal.InternalClientCache;
 import org.apache.geode.cache.query.FunctionDomainException;
 import org.apache.geode.cache.query.Index;
 import org.apache.geode.cache.query.IndexInvalidException;
@@ -71,14 +67,11 @@ import org.apache.geode.cache.query.data.Portfolio;
 import org.apache.geode.cache.query.internal.DefaultQuery;
 import org.apache.geode.cache.query.internal.ExecutionContext;
 import org.apache.geode.cache.server.CacheServer;
-import org.apache.geode.cache30.TestCacheLoader;
 import org.apache.geode.distributed.DistributedMember;
 import org.apache.geode.distributed.internal.InternalDistributedSystem;
 import org.apache.geode.internal.AvailablePortHelper;
-import org.apache.geode.internal.cache.DistributedRegion;
 import org.apache.geode.internal.cache.GemFireCacheImpl;
 import org.apache.geode.internal.cache.InternalCache;
-import org.apache.geode.internal.cache.PartitionedRegion;
 import org.apache.geode.internal.cache.control.HeapMemoryMonitor;
 import org.apache.geode.internal.cache.control.InternalResourceManager;
 import org.apache.geode.internal.cache.control.InternalResourceManager.ResourceType;
@@ -94,13 +87,13 @@ import org.apache.geode.test.dunit.NetworkUtils;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.dunit.rules.CacheRule;
 import org.apache.geode.test.dunit.rules.ClientCacheRule;
+import org.apache.geode.test.dunit.rules.DistributedRule;
 import org.apache.geode.test.junit.categories.OQLQueryTest;
 import org.apache.geode.util.internal.GeodeGlossary;
 
 @Category({OQLQueryTest.class})
 public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
-  private static final String NON_EXISTENT_KEY = "NON_EXISTENT_KEY";
   private static final String TEST_POOL_NAME = "testPool";
   private static final Logger LOGGER = LogService.getLogger();
   private static final int MAX_TEST_QUERY_TIMEOUT = 4000;
@@ -108,10 +101,12 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   private static final int CRITICAL_HEAP_USED = 950;
   private static final int NORMAL_HEAP_USED = 500;
   private static final boolean AUTO_LOAD_BALANCE = false;
-  private static final AtomicReference<InternalCache> CACHE = new AtomicReference<>();
-  private static final AtomicReference<InternalClientCache> CLIENT_CACHE = new AtomicReference<>();
 
+  private static InternalCache cache;
   private static CountDownLatch criticalMemoryCountDownLatch;
+
+  @Rule
+  public DistributedRule distributedRule = new DistributedRule();
 
   @Rule
   public CacheRule cacheRule = new CacheRule();
@@ -133,36 +128,31 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   @After
   public final void tearDown() {
     Invoke.invokeInEveryVM(() -> {
-      InternalCache cache1 = getCache();
-      if (cache1.getQueryMonitor() != null) {
-        cache1.getQueryMonitor().setLowMemory(false, 0);
+      if (cache.getQueryMonitor() != null) {
+        cache.getQueryMonitor().setLowMemory(false, 0);
       }
       DefaultQuery.testHook = null;
       return null;
     });
 
     Invoke.invokeInEveryVM(() -> {
-      InternalResourceManager irm = getCache().getInternalResourceManager();
+      InternalResourceManager internalResourceManager = cache.getInternalResourceManager();
       // Reset CRITICAL_UP by informing all that heap usage is now 1 byte (0 would disable).
-      irm.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
-      Set<ResourceListener> listeners = irm.getResourceListeners(ResourceType.HEAP_MEMORY);
-      for (ResourceListener l : listeners) {
-        if (l instanceof TestMemoryThresholdListener) {
-          ((TestMemoryThresholdListener) l).resetThresholdCalls();
+      internalResourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
+      Set<ResourceListener> listeners =
+          internalResourceManager.getResourceListeners(ResourceType.HEAP_MEMORY);
+      for (ResourceListener listener : listeners) {
+        if (listener instanceof TestMemoryThresholdListener) {
+          ((TestMemoryThresholdListener) listener).resetThresholdCalls();
         }
       }
-      irm.setCriticalHeapPercentage(0f);
-      irm.setEvictionHeapPercentage(0f);
-      irm.getHeapMonitor().setTestMaxMemoryBytes(0);
+      internalResourceManager.setCriticalHeapPercentage(0f);
+      internalResourceManager.setEvictionHeapPercentage(0f);
+      internalResourceManager.getHeapMonitor().setTestMaxMemoryBytes(0);
       HeapMemoryMonitor.setTestDisableMemoryUpdates(false);
       return null;
     });
-    // this makes sure we don't leave anything for the next tests
     disconnectAllFromDS();
-  }
-
-  private InternalCache getCache() {
-    return CACHE.get();
   }
 
   @Test
@@ -219,7 +209,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
     try {
       final int port = AvailablePortHelper.getRandomAvailableTCPPort();
       server.invoke(() -> startCacheServer(port, false, 1, false));
-//      startCacheServer(server, port, false, 1, false);
+      // startCacheServer(server, port, false, 1, false);
       populateData(server);
       executeQueryWithCriticalHeapCalledAfterTimeout(server, server);
       vmRecoversFromCriticalHeap(server);
@@ -240,10 +230,10 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
     try {
       final int port = AvailablePortHelper.getRandomAvailableTCPPort();
       server.invoke(() -> startCacheServer(port, false, 1, false));
-//      startCacheServer(server, port, false, 1, false);
+      // startCacheServer(server, port, false, 1, false);
 
       client.invoke(() -> startClient(port));
-//      startClient(client, port);
+      // startClient(client, port);
       populateData(server);
       executeQueryWithCriticalHeapCalledAfterTimeout(server, client);
       vmRecoversFromCriticalHeap(server);
@@ -298,11 +288,11 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       final int[] port = AvailablePortHelper.getRandomAvailableTCPPorts(2);
       server1.invoke(() -> startCacheServer(port[0], false, -1, true));
       server2.invoke(() -> startCacheServer(port[1], false, -1, true));
-//      startCacheServer(server1, port[0], false,-1, true);
-//      startCacheServer(server2, port[1], true, -1, true);
+      // startCacheServer(server1, port[0], false,-1, true);
+      // startCacheServer(server2, port[1], true, -1, true);
 
       client.invoke(() -> startClient(port[0]));
-//      startClient(client, port[0]);
+      // startClient(client, port[0]);
       populateData(server2);
 
       server1.invoke("create latch test Hook", () -> {
@@ -327,7 +317,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       // Check to see if query execution is ok under "normal" or "healthy" conditions
       client.invoke("Executing query when system is 'Normal'", () -> {
         try {
-          Query query = getCache().getQueryService().newQuery("Select * From /" + "portfolios");
+          Query query = cache.getQueryService().newQuery("Select * From /" + "portfolios");
           SelectResults results = (SelectResults) query.execute();
           assertThat(results.size()).isEqualTo(numObjects);
         } catch (QueryInvocationTargetException | FunctionDomainException | TypeMismatchException
@@ -362,37 +352,34 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       final int[] port = AvailablePortHelper.getRandomAvailableTCPPorts(2);
       server1.invoke(() -> startCacheServer(port[0], false, -1, true));
       server2.invoke(() -> startCacheServer(port[1], true, -1, true));
-//      startCacheServer(server1, port[0], false, -1, true);
-//      startCacheServer(server2, port[1], true, -1, true);
+      // startCacheServer(server1, port[0], false, -1, true);
+      // startCacheServer(server2, port[1], true, -1, true);
 
       client.invoke(() -> startClient(port[0]));
-//      startClient(client, port[0]);
+      // startClient(client, port[0]);
       populateData(server2);
 
       createCancelDuringGatherTestHook(server1, true, VM.getController());
       client.invoke("executing query to be canceled by gather", () -> {
         QueryService qs;
         try {
-          qs = getCache().getQueryService();
+          qs = cache.getQueryService();
           Query query = qs.newQuery("Select * From /" + "portfolios");
           query.execute();
         } catch (ServerOperationException soe) {
           if (soe.getRootCause() instanceof QueryException) {
             QueryException e = (QueryException) soe.getRootCause();
             if (!isExceptionDueToLowMemory(e)) {
-              throw new CacheException(soe) {
-              };
+              throw new CacheException(soe) {};
             } else {
               return 0;
             }
           }
         } catch (Exception e) {
-          throw new CacheException(e) {
-          };
+          throw new CacheException(e) {};
         }
         // assertTrue(((CancelDuringGatherHook)DefaultQuery.testHook).triggeredOOME);
-        throw new CacheException("should have hit low memory") {
-        };
+        throw new CacheException("should have hit low memory") {};
       });
 
       verifyRejectedObjects(server1);
@@ -403,7 +390,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       // Check to see if query execution is ok under "normal" or "healthy" conditions
       client.invoke("Executing query when system is 'Normal'", () -> {
         try {
-          QueryService qs = getCache().getQueryService();
+          QueryService qs = cache.getQueryService();
           Query query = qs.newQuery("Select * From /" + "portfolios");
           SelectResults results = (SelectResults) query.execute();
           assertThat(results.size()).isEqualTo(numObjects);
@@ -432,22 +419,21 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       final int[] port = AvailablePortHelper.getRandomAvailableTCPPorts(2);
       server1.invoke(() -> startCacheServer(port[0], false, -1, true));
       server2.invoke(() -> startCacheServer(port[1], true, -1, true));
-//      startCacheServer(server1, port[0], false, -1, true);
-//      startCacheServer(server2, port[1], true, -1, true);
+      // startCacheServer(server1, port[0], false, -1, true);
+      // startCacheServer(server2, port[1], true, -1, true);
 
       client.invoke(() -> startClient(port[0]));
-//      startClient(client, port[0]);
+      // startClient(client, port[0]);
       populateData(server2);
 
       createCancelDuringAddResultsTestHook(server1);
       client.invoke("executing query to be canceled during add results", () -> {
         QueryService qs;
         try {
-          qs = getCache().getQueryService();
+          qs = cache.getQueryService();
           Query query = qs.newQuery("Select * From /" + "portfolios");
           query.execute();
-          throw new CacheException("should have hit low memory") {
-          };
+          throw new CacheException("should have hit low memory") {};
         } catch (Exception e) {
           handleException(e, true, false, -1);
         }
@@ -462,7 +448,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       // Check to see if query execution is ok under "normal" or "healthy" conditions
       client.invoke("Executing query when system is 'Normal'", () -> {
         try {
-          QueryService qs = getCache().getQueryService();
+          QueryService qs = cache.getQueryService();
           Query query = qs.newQuery("Select * From /" + "portfolios");
           SelectResults results = (SelectResults) query.execute();
           assertThat(results.size()).isEqualTo(numObjects);
@@ -521,11 +507,10 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   private AsyncInvocation executeQueryOnClient(VM client) {
     return client.invokeAsync("execute query from client", () -> {
       try {
-        Query query1 = getCache().getQueryService().newQuery("Select * From /" + "portfolios");
+        Query query1 = cache.getQueryService().newQuery("Select * From /" + "portfolios");
         query1.execute();
 
-        throw new CacheException("Exception should have been thrown due to low memory") {
-        };
+        throw new CacheException("Exception should have been thrown due to low memory") {};
       } catch (Exception e2) {
         handleException(e2, true, false, -1);
       }
@@ -536,7 +521,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   private void setHeapToCriticalAndReleaseLatch(VM server1) {
     server1.invoke("vm hits critical heap and counts down latch.", () -> {
       InternalResourceManager resourceManager =
-          (InternalResourceManager) getCache().getResourceManager();
+          (InternalResourceManager) cache.getResourceManager();
       resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
 
       await()
@@ -561,7 +546,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       }
 
       InternalResourceManager resourceManager =
-          (InternalResourceManager) getCache().getResourceManager();
+          (InternalResourceManager) cache.getResourceManager();
       resourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
 
       await().until(() -> resourceManager.getHeapMonitor().getState() == EVICTION_DISABLED);
@@ -569,51 +554,51 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   }
 
   public static Pool configureConnectionPool(AttributesFactory factory, String host, int port1,
-                                             int port2, boolean establish, int redundancy,
-                                             int connectionsPerServer, String serverGroup,
-                                             int pingInterval, int idleTimeout,
-                                             int lifetimeTimeout) {
+      int port2, boolean establish, int redundancy,
+      int connectionsPerServer, String serverGroup,
+      int pingInterval, int idleTimeout,
+      int lifetimeTimeout) {
     int[] ports;
     if (port2 != -1) {
-      ports = new int[]{port1, port2};
+      ports = new int[] {port1, port2};
     } else {
-      ports = new int[]{port1};
+      ports = new int[] {port1};
     }
     return configureConnectionPool(factory, host, ports, establish, redundancy,
         connectionsPerServer, serverGroup, pingInterval, idleTimeout, lifetimeTimeout);
   }
 
   public static Pool configureConnectionPool(AttributesFactory factory, String host, int port1,
-                                             int port2, boolean establish, int redundancy,
-                                             int connectionsPerServer, String serverGroup) {
+      int port2, boolean establish, int redundancy,
+      int connectionsPerServer, String serverGroup) {
     return configureConnectionPool(factory, host, port1, port2, establish, redundancy,
         connectionsPerServer, serverGroup, -1, -1,
         -2);
   }
 
   public static Pool configureConnectionPool(AttributesFactory factory, String host, int[] ports,
-                                             boolean establish, int redundancy,
-                                             int connectionsPerServer, String serverGroup) {
+      boolean establish, int redundancy,
+      int connectionsPerServer, String serverGroup) {
     return configureConnectionPool(factory, host, ports, establish, redundancy,
         connectionsPerServer, serverGroup, -1/* pingInterval */, -1/* idleTimeout */,
         -2/* lifetimeTimeout */);
   }
 
   public static Pool configureConnectionPool(AttributesFactory factory, String host, int[] ports,
-                                             boolean establish, int redundancy,
-                                             int connectionsPerServer, String serverGroup,
-                                             int pingInterval, int idleTimeout,
-                                             int lifetimeTimeout) {
+      boolean establish, int redundancy,
+      int connectionsPerServer, String serverGroup,
+      int pingInterval, int idleTimeout,
+      int lifetimeTimeout) {
     return configureConnectionPoolWithNameAndFactory(factory, host, ports, establish, redundancy,
         connectionsPerServer, serverGroup, null, PoolManager.createFactory(), pingInterval,
         idleTimeout, lifetimeTimeout, -1);
   }
 
   public static Pool configureConnectionPool(AttributesFactory factory, String host, int[] ports,
-                                             boolean establish, int redundancy,
-                                             int connectionsPerServer, String serverGroup,
-                                             int pingInterval, int idleTimeout, int lifetimeTimeout,
-                                             int statisticInterval) {
+      boolean establish, int redundancy,
+      int connectionsPerServer, String serverGroup,
+      int pingInterval, int idleTimeout, int lifetimeTimeout,
+      int statisticInterval) {
     return configureConnectionPoolWithNameAndFactory(factory, host, ports, establish, redundancy,
         connectionsPerServer, serverGroup, null, PoolManager.createFactory(), pingInterval,
         idleTimeout, lifetimeTimeout, statisticInterval);
@@ -625,14 +610,14 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
    * locator.
    */
   public static Pool configureConnectionPoolWithNameAndFactory(AttributesFactory factory,
-                                                               String host, int[] ports,
-                                                               boolean establish, int redundancy,
-                                                               int connectionsPerServer,
-                                                               String serverGroup, String poolName,
-                                                               PoolFactory pf, int pingInterval,
-                                                               int idleTimeout,
-                                                               int lifetimeTimeout,
-                                                               int statisticInterval) {
+      String host, int[] ports,
+      boolean establish, int redundancy,
+      int connectionsPerServer,
+      String serverGroup, String poolName,
+      PoolFactory pf, int pingInterval,
+      int idleTimeout,
+      int lifetimeTimeout,
+      int statisticInterval) {
 
     if (AUTO_LOAD_BALANCE || ports.length == 0) {
       pf.addLocator(host, DistributedTestUtils.getLocatorPort());
@@ -678,38 +663,38 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   }
 
   public static <K, V> Pool configureConnectionPool(RegionFactory<K, V> factory, String host,
-                                                    int[] ports, boolean establish, int redundancy,
-                                                    int connectionsPerServer,
-                                                    String serverGroup) {
+      int[] ports, boolean establish, int redundancy,
+      int connectionsPerServer,
+      String serverGroup) {
     return configureConnectionPoolWithNameAndFactory(factory, host, ports, establish, redundancy,
         connectionsPerServer, serverGroup, TEST_POOL_NAME, PoolManager.createFactory(), -1, -1, -2,
         -1);
   }
 
   public static <K, V> Pool configureConnectionPoolWithNameAndFactory(RegionFactory<K, V> factory,
-                                                                      String host, int[] ports,
-                                                                      boolean establish,
-                                                                      int redundancy,
-                                                                      int connectionsPerServer,
-                                                                      String serverGroup,
-                                                                      String poolName,
-                                                                      PoolFactory pf) {
+      String host, int[] ports,
+      boolean establish,
+      int redundancy,
+      int connectionsPerServer,
+      String serverGroup,
+      String poolName,
+      PoolFactory pf) {
     return configureConnectionPoolWithNameAndFactory(factory, host, ports, establish, redundancy,
         connectionsPerServer, serverGroup, poolName, pf, -1, -1, -2, -1);
   }
 
   public static <K, V> Pool configureConnectionPoolWithNameAndFactory(RegionFactory<K, V> factory,
-                                                                      String host, int[] ports,
-                                                                      boolean establish,
-                                                                      int redundancy,
-                                                                      int connectionsPerServer,
-                                                                      String serverGroup,
-                                                                      String poolName,
-                                                                      PoolFactory pf,
-                                                                      int pingInterval,
-                                                                      int idleTimeout,
-                                                                      int lifetimeTimeout,
-                                                                      int statisticInterval) {
+      String host, int[] ports,
+      boolean establish,
+      int redundancy,
+      int connectionsPerServer,
+      String serverGroup,
+      String poolName,
+      PoolFactory pf,
+      int pingInterval,
+      int idleTimeout,
+      int lifetimeTimeout,
+      int statisticInterval) {
 
     if (AUTO_LOAD_BALANCE || ports.length == 0) {
       pf.addLocator(host, DistributedTestUtils.getLocatorPort());
@@ -762,8 +747,8 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   }
 
   private void doCriticalMemoryHitTest(boolean createPR,
-                                       final boolean disabledQueryMonitorForLowMem,
-                                       final int queryTimeout, final boolean hitCriticalThreshold) {
+      final boolean disabledQueryMonitorForLowMem,
+      final int queryTimeout, final boolean hitCriticalThreshold) {
     // create region on the server
     final VM server = VM.getVM(0);
     final VM client = VM.getVM(1);
@@ -772,10 +757,10 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       final int port = AvailablePortHelper.getRandomAvailableTCPPort();
       server.invoke(
           () -> startCacheServer(port, disabledQueryMonitorForLowMem, queryTimeout, createPR));
-//      startCacheServer(server, port, disabledQueryMonitorForLowMem, queryTimeout, createPR);
+      // startCacheServer(server, port, disabledQueryMonitorForLowMem, queryTimeout, createPR);
 
       client.invoke(() -> startClient(port));
-//      startClient(client, port);
+      // startClient(client, port);
       populateData(server);
 
       doTestCriticalHeapAndQueryTimeout(server, client, disabledQueryMonitorForLowMem,
@@ -790,7 +775,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       // Check to see if query execution is ok under "normal" or "healthy" conditions
       client.invoke("Executing query when system is 'Normal'", () -> {
         try {
-          QueryService qs = getCache().getQueryService();
+          QueryService qs = cache.getQueryService();
           Query query = qs.newQuery("Select * From /" + "portfolios");
           SelectResults results = (SelectResults) query.execute();
           assertThat(results.size()).isEqualTo(numObjects);
@@ -815,8 +800,8 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
   // test to verify what happens during index creation if memory threshold is hit
   private void doCriticalMemoryHitWithIndexTest(boolean createPR,
-                                                final boolean disabledQueryMonitorForLowMem,
-                                                final String indexType) {
+      final boolean disabledQueryMonitorForLowMem,
+      final String indexType) {
     // create region on the server
     final VM server1 = VM.getVM(0);
     final VM server2 = VM.getVM(2);
@@ -826,18 +811,18 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       final int[] port = AvailablePortHelper.getRandomAvailableTCPPorts(2);
       server1.invoke(() -> startCacheServer(port[0], disabledQueryMonitorForLowMem, -1, createPR));
       server2.invoke(() -> startCacheServer(port[1], true, -1, createPR));
-//      startCacheServer(server1, port[0], disabledQueryMonitorForLowMem, -1, createPR);
-//      startCacheServer(server2, port[1], true, -1, createPR);
+      // startCacheServer(server1, port[0], disabledQueryMonitorForLowMem, -1, createPR);
+      // startCacheServer(server2, port[1], true, -1, createPR);
 
       client.invoke(() -> startClient(port[0]));
-//      startClient(client, port[0]);
+      // startClient(client, port[0]);
       populateData(server1);
 
       createCancelDuringGatherTestHook(server1, true, VM.getController());
       server1.invoke("create index", () -> {
         QueryService qs;
         try {
-          qs = getCache().getQueryService();
+          qs = cache.getQueryService();
           Index index = null;
           if (indexType.equals("compact")) {
             index = qs.createIndex("newIndex", "ID", "/" + "portfolios");
@@ -848,19 +833,16 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
           assertThat(((CancelDuringGatherHook) DefaultQuery.testHook).triggeredOOME).isTrue();
 
           if (!disabledQueryMonitorForLowMem) {
-            throw new CacheException("Should have hit low memory") {
-            };
+            throw new CacheException("Should have hit low memory") {};
           }
           assertThat(qs.getIndexes().size()).isEqualTo(1);
         } catch (Exception e) {
           if (e instanceof IndexInvalidException) {
             if (disabledQueryMonitorForLowMem) {
-              throw new CacheException("Should not have run into low memory exception") {
-              };
+              throw new CacheException("Should not have run into low memory exception") {};
             }
           } else {
-            throw new CacheException(e) {
-            };
+            throw new CacheException(e) {};
           }
         }
         return 0;
@@ -874,9 +856,9 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
   // Executes the query on the server with the RM and QM configured
   private void doCriticalMemoryHitTestOnServer(boolean createPR,
-                                               final boolean disabledQueryMonitorForLowMem,
-                                               final int queryTimeout,
-                                               final boolean hitCriticalThreshold) {
+      final boolean disabledQueryMonitorForLowMem,
+      final int queryTimeout,
+      final boolean hitCriticalThreshold) {
     // create region on the server
     final VM server = VM.getVM(0);
     final int numObjects = 200;
@@ -884,7 +866,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       final int port = AvailablePortHelper.getRandomAvailableTCPPort();
       server.invoke(
           () -> startCacheServer(port, disabledQueryMonitorForLowMem, queryTimeout, createPR));
-//      startCacheServer(server, port, disabledQueryMonitorForLowMem, queryTimeout, createPR);
+      // startCacheServer(server, port, disabledQueryMonitorForLowMem, queryTimeout, createPR);
 
       populateData(server);
 
@@ -899,7 +881,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       // Check to see if query execution is ok under "normal" or "healthy" conditions
       server.invoke("Executing query when system is 'Normal'", () -> {
         try {
-          QueryService qs = getCache().getQueryService();
+          QueryService qs = cache.getQueryService();
           Query query = qs.newQuery("Select * From /" + "portfolios");
           SelectResults results = (SelectResults) query.execute();
           assertThat(results.size()).isEqualTo(numObjects);
@@ -932,9 +914,9 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   // The last part of the test is to execute another query with the system under duress and have it
   // be rejected/cancelled if rm and qm are in use
   private void doTestCriticalHeapAndQueryTimeout(VM server, VM client,
-                                                 final boolean disabledQueryMonitorForLowMem,
-                                                 final int queryTimeout,
-                                                 final boolean hitCriticalThreshold) {
+      final boolean disabledQueryMonitorForLowMem,
+      final int queryTimeout,
+      final boolean hitCriticalThreshold) {
     createLatchTestHook(server, hitCriticalThreshold, VM.getController());
 
     AsyncInvocation queryExecution = invokeClientQuery(client,
@@ -1006,7 +988,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
     return client.invokeAsync("execute query from client", () -> {
       QueryService qs;
       try {
-        qs = getCache().getQueryService();
+        qs = cache.getQueryService();
         Query query = qs.newQuery("Select * From /" + "portfolios");
         query.execute();
 
@@ -1032,8 +1014,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
         e.printStackTrace();
         throw new CacheException(
             "The query should have been terminated by a timeout exception but instead hit a different exception :"
-                + e) {
-        };
+                + e) {};
       }
       return -1;
     });
@@ -1041,14 +1022,14 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   }
 
   private AsyncInvocation invokeClientQuery(VM client,
-                                            final boolean disabledQueryMonitorForLowMem,
-                                            final int queryTimeout,
-                                            final boolean hitCriticalThreshold,
-                                            VM callbackToVM) {
+      final boolean disabledQueryMonitorForLowMem,
+      final int queryTimeout,
+      final boolean hitCriticalThreshold,
+      VM callbackToVM) {
     return client.invokeAsync("execute query from client", () -> {
       QueryService qs = null;
       try {
-        qs = getCache().getQueryService();
+        qs = cache.getQueryService();
         Query query = qs.newQuery("Select * From /" + "portfolios");
         callbackToVM
             .invoke(() -> ResourceManagerWithQueryMonitorDUnitTest.criticalMemoryCountDownLatch
@@ -1059,13 +1040,11 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
           if (queryTimeout != -1) {
             // we should have timed out due to the way the test is written
             // the query should have hit the configured timeouts
-            throw new CacheException("Should have reached the query timeout") {
-            };
+            throw new CacheException("Should have reached the query timeout") {};
           }
         } else {
           if (hitCriticalThreshold) {
-            throw new CacheException("Exception should have been thrown due to low memory") {
-            };
+            throw new CacheException("Exception should have been thrown due to low memory") {};
           }
         }
       } catch (Exception e) {
@@ -1076,8 +1055,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
         Query query = qs.newQuery("Select * From /" + "portfolios");
         query.execute();
         if (hitCriticalThreshold && !disabledQueryMonitorForLowMem) {
-          throw new CacheException("Low memory should still be cancelling queries") {
-          };
+          throw new CacheException("Low memory should still be cancelling queries") {};
         }
       } catch (Exception e) {
         handleException(e, hitCriticalThreshold, disabledQueryMonitorForLowMem, queryTimeout);
@@ -1088,13 +1066,12 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   }
 
   private void handleException(Exception e, boolean hitCriticalThreshold,
-                               boolean disabledQueryMonitorForLowMem, long queryTimeout)
+      boolean disabledQueryMonitorForLowMem, long queryTimeout)
       throws CacheException {
     if (e instanceof QueryExecutionLowMemoryException) {
       if (!(hitCriticalThreshold && !disabledQueryMonitorForLowMem)) {
         // meaning the query should not be canceled due to low memory
-        throw new CacheException("Query should not have been canceled due to memory") {
-        };
+        throw new CacheException("Query should not have been canceled due to memory") {};
       }
     } else if (e instanceof QueryExecutionTimeoutException) {
       // if we have a queryTimeout set
@@ -1102,55 +1079,47 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
         // no time out set, this should not be thrown
         throw new CacheException(
             "Query failed due to unexplained reason, should not have been a time out or low memory "
-                + DefaultQuery.testHook.getClass().getName() + " " + e) {
-        };
+                + DefaultQuery.testHook.getClass().getName() + " " + e) {};
       }
     } else if (e instanceof QueryException) {
       if (isExceptionDueToLowMemory((QueryException) e)) {
         if (!(hitCriticalThreshold && !disabledQueryMonitorForLowMem)) {
           // meaning the query should not be canceled due to low memory
-          throw new CacheException("Query should not have been canceled due to memory") {
-          };
+          throw new CacheException("Query should not have been canceled due to memory") {};
         }
       } else if (isExceptionDueToTimeout((QueryException) e)) {
 
         if (queryTimeout == -1) {
           // no time out set, this should not be thrown
           throw new CacheException(
-              "Query failed due to unexplained reason, should not have been a time out or low memory") {
-          };
+              "Query failed due to unexplained reason, should not have been a time out or low memory") {};
         }
       } else {
-        throw new CacheException(e) {
-        };
+        throw new CacheException(e) {};
       }
     } else if (e instanceof ServerOperationException) {
       ServerOperationException soe = (ServerOperationException) e;
       if (soe.getRootCause() instanceof QueryExecutionLowMemoryException) {
         if (!(hitCriticalThreshold && !disabledQueryMonitorForLowMem)) {
           // meaning the query should not be canceled due to low memory
-          throw new CacheException("Query should not have been canceled due to memory") {
-          };
+          throw new CacheException("Query should not have been canceled due to memory") {};
         }
       } else if (soe.getRootCause() instanceof QueryException) {
         QueryException qe = (QueryException) soe.getRootCause();
         if (isExceptionDueToLowMemory(qe)) {
           if (!(hitCriticalThreshold && !disabledQueryMonitorForLowMem)) {
             // meaning the query should not be canceled due to low memory
-            throw new CacheException("Query should not have been canceled due to memory") {
-            };
+            throw new CacheException("Query should not have been canceled due to memory") {};
           }
         } else if (isExceptionDueToTimeout(qe)) {
           if (queryTimeout == -1) {
             e.printStackTrace();
             // no time out set, this should not be thrown
             throw new CacheException(
-                "Query failed due to unexplained reason, should not have been a time out or low memory") {
-            };
+                "Query failed due to unexplained reason, should not have been a time out or low memory") {};
           }
         } else {
-          throw new CacheException(soe) {
-          };
+          throw new CacheException(soe) {};
         }
       } else if (soe.getRootCause() instanceof QueryExecutionTimeoutException) {
         // if we have a queryTimeout set
@@ -1158,23 +1127,20 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
           // no time out set, this should not be thrown
           throw new CacheException(
               "Query failed due to unexplained reason, should not have been a time out or low memory "
-                  + DefaultQuery.testHook.getClass().getName() + " " + soe.getRootCause()) {
-          };
+                  + DefaultQuery.testHook.getClass().getName() + " " + soe.getRootCause()) {};
         }
       } else {
-        throw new CacheException(soe) {
-        };
+        throw new CacheException(soe) {};
       }
     } else {
-      throw new CacheException(e) {
-      };
+      throw new CacheException(e) {};
     }
   }
 
   private void vmHitsCriticalHeap(VM vm) {
     vm.invoke("vm hits critical heap", () -> {
       InternalResourceManager resourceManager =
-          (InternalResourceManager) getCache().getResourceManager();
+          (InternalResourceManager) cache.getResourceManager();
       resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
     });
   }
@@ -1183,7 +1149,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   private void vmRecoversFromCriticalHeap(VM vm) {
     vm.invoke("vm hits critical heap", () -> {
       InternalResourceManager resourceManager =
-          (InternalResourceManager) getCache().getResourceManager();
+          (InternalResourceManager) cache.getResourceManager();
       resourceManager.getHeapMonitor().updateStateAndSendEvent(NORMAL_HEAP_USED, "test");
     });
   }
@@ -1191,7 +1157,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   private MemoryThresholds.MemoryState vmCheckCritcalHeap(VM vm) {
     return vm.invoke("vm hits critical heap", () -> {
       InternalResourceManager resourceManager =
-          (InternalResourceManager) getCache().getResourceManager();
+          (InternalResourceManager) cache.getResourceManager();
       return resourceManager.getHeapMonitor().getState();
     });
   }
@@ -1203,14 +1169,14 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
   }
 
   private void createLatchTestHook(VM vm, boolean hitCriticalThreshold,
-                                   VM vmToCallBack) {
+      VM vmToCallBack) {
     vm.invoke("create latch test Hook", () -> {
       DefaultQuery.testHook = getPauseHook(hitCriticalThreshold, vmToCallBack);
     });
   }
 
   private void createCancelDuringGatherTestHook(VM vm, boolean hitCriticalThreshold,
-                                                VM vmToCallback) {
+      VM vmToCallback) {
     vm.invoke("create cancel during gather test Hook", () -> {
       DefaultQuery.testHook = getCancelDuringGatherHook(hitCriticalThreshold, vmToCallback);
     });
@@ -1248,7 +1214,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
   private void populateData(VM vm) {
     vm.invoke("populate data for " + "portfolios", () -> {
-      Region<String, Portfolio> region = getCache().getRegion("portfolios");
+      Region<String, Portfolio> region = cache.getRegion("portfolios");
       for (int i = 0; i < 200; i++) {
         region.put("key_" + i, new Portfolio(i));
       }
@@ -1257,18 +1223,18 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
   private void stopServer(VM server) {
     server.invoke(() -> {
-      GemFireCacheImpl cache = (GemFireCacheImpl) getCache();
-      cache.MAX_QUERY_EXECUTION_TIME = -1;
+      GemFireCacheImpl cacheImpl = (GemFireCacheImpl) cache;
+      cacheImpl.MAX_QUERY_EXECUTION_TIME = -1;
       return null;
     });
   }
 
   private void startCacheServer(final int port,
-                                final boolean disableQueryMonitorForLowMemory,
-                                final int queryTimeout,
-                                final boolean createPR) throws IOException {
+      final boolean disableQueryMonitorForLowMemory,
+      final int queryTimeout,
+      final boolean createPR) throws IOException {
 
-//    getSystem(getServerProperties());
+    // getSystem(getServerProperties());
     if (disableQueryMonitorForLowMemory) {
       System.setProperty(
           GeodeGlossary.GEMFIRE_PREFIX + "Cache.DISABLE_QUERY_MONITOR_FOR_LOW_MEMORY",
@@ -1278,11 +1244,11 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
           GeodeGlossary.GEMFIRE_PREFIX + "Cache.DISABLE_QUERY_MONITOR_FOR_LOW_MEMORY");
     }
 
-    CACHE.set(cacheRule.getOrCreateCache(getServerProperties()));
+    cache = cacheRule.getOrCreateCache(getServerProperties());
 
-    GemFireCacheImpl cache = (GemFireCacheImpl) getCache();
+    GemFireCacheImpl cacheImpl = (GemFireCacheImpl) cache;
 
-    cache.MAX_QUERY_EXECUTION_TIME = queryTimeout;
+    cacheImpl.MAX_QUERY_EXECUTION_TIME = queryTimeout;
 
     InternalResourceManager resourceManager =
         (InternalResourceManager) cache.getResourceManager();
@@ -1302,37 +1268,33 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
       factory.setDataPolicy(DataPolicy.REPLICATE);
     }
     factory.create("portfolios");
-    CacheServer cacheServer = getCache().addCacheServer();
+    CacheServer cacheServer = cache.addCacheServer();
     cacheServer.setPort(port);
     cacheServer.start();
 
   }
 
   private void startClient(final int port) {
-
-//      Properties props = getClientProps();
-//      getSystem(props);
-
-    final ClientCacheFactory clientCacheFactory = new ClientCacheFactory(getClientProps());
+    ClientCacheFactory clientCacheFactory = new ClientCacheFactory(getClientProps());
     clientCacheFactory.addPoolServer(NetworkUtils.getServerHostName(), port);
-    CLIENT_CACHE.set((InternalClientCache) clientCacheFactory.create());
+    clientCacheRule.createClientCache(clientCacheFactory);
   }
 
-  private InternalClientCache getClientCache() {
-    return CLIENT_CACHE.get();
-  }
+//  private InternalClientCache getClientCache() {
+//    return clientCacheRule.getClientCache();
+//  }
 
   private Properties getClientProps() {
-    Properties p = new Properties();
-    p.setProperty(MCAST_PORT, "0");
-    p.setProperty(LOCATORS, "");
-    return p;
+    Properties properties = new Properties();
+    properties.setProperty(MCAST_PORT, "0");
+    properties.setProperty(LOCATORS, "");
+    return properties;
   }
 
   private Properties getServerProperties() {
-    Properties p = new Properties();
-    p.setProperty(LOCATORS, "localhost[" + DistributedTestUtils.getLocatorPort() + "]");
-    return p;
+    Properties properties = new Properties();
+    properties.setProperty(LOCATORS, "localhost[" + DistributedTestUtils.getLocatorPort() + "]");
+    return properties;
   }
 
   private boolean isExceptionDueToLowMemory(QueryException e) {
@@ -1342,7 +1304,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
             "Query execution canceled due to memory threshold crossed in system, memory used: %s bytes.",
             ResourceManagerWithQueryMonitorDUnitTest.CRITICAL_HEAP_USED))
         || message.contains(
-        "Query execution canceled due to low memory while gathering results from partitioned regions"));
+            "Query execution canceled due to low memory while gathering results from partitioned regions"));
   }
 
   private boolean isExceptionDueToTimeout(QueryException e) {
@@ -1354,17 +1316,17 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
     return (message.contains("The QueryMonitor thread may be sleeping longer than")
         || message.contains("Query execution canceled after exceeding max execution time")
         || message.contains(
-        String.format("Query execution canceled after exceeding max execution time %sms.",
-            -1)));
+            String.format("Query execution canceled after exceeding max execution time %sms.",
+                -1)));
   }
 
   private DefaultQuery.TestHook getPauseHook(boolean hitCriticalThreshold,
-                                             VM vmToCallback) {
+      VM vmToCallback) {
     return new PauseTestHook(hitCriticalThreshold, vmToCallback);
   }
 
   private DefaultQuery.TestHook getCancelDuringGatherHook(boolean hitCriticalThreshold,
-                                                          VM vmToCallback) {
+      VM vmToCallback) {
     return new CancelDuringGatherHook(hitCriticalThreshold, vmToCallback);
   }
 
@@ -1379,7 +1341,6 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
    */
   public int startBridgeServer(int port) throws IOException {
 
-    Cache cache = getCache();
     CacheServer bridge = cache.addCacheServer();
     bridge.setPort(port);
     bridge.setMaxThreads(getMaxThreads());
@@ -1423,7 +1384,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
     @Override
     public void doTestHook(final SPOTS spot, final DefaultQuery _ignored,
-                           final ExecutionContext executionContext) {
+        final ExecutionContext executionContext) {
       switch (spot) {
         case BEFORE_QUERY_EXECUTION:
           try {
@@ -1438,7 +1399,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
         case BEFORE_ADD_OR_UPDATE_MAPPING_OR_DESERIALIZING_NTH_STREAMINGOPERATION:
           if (hitCriticalThreshold && hitOnce.compareAndSet(false, true)) {
             InternalResourceManager resourceManager =
-                (InternalResourceManager) getCache().getResourceManager();
+                (InternalResourceManager) cache.getResourceManager();
             resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
             await().until(() -> vmCheckCritcalHeap() == EVICTION_DISABLED_CRITICAL);
 
@@ -1477,7 +1438,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
     @Override
     public void doTestHook(final SPOTS spot, final DefaultQuery _ignored,
-                           final ExecutionContext executionContext) {
+        final ExecutionContext executionContext) {
       int numObjectsBeforeCancel = 5;
       switch (spot) {
         case LOW_MEMORY_WHEN_DESERIALIZING_STREAMINGOPERATION:
@@ -1487,7 +1448,7 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
           if (count++ == numObjectsBeforeCancel) {
             if (hitCriticalThreshold && hitOnce.compareAndSet(false, true)) {
               InternalResourceManager resourceManager =
-                  (InternalResourceManager) getCache().getResourceManager();
+                  (InternalResourceManager) cache.getResourceManager();
               resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
               await().until(() -> vmCheckCritcalHeap() == EVICTION_DISABLED_CRITICAL);
               callbackVM
@@ -1508,12 +1469,12 @@ public class ResourceManagerWithQueryMonitorDUnitTest implements Serializable {
 
     @Override
     public void doTestHook(final SPOTS spot, final DefaultQuery _ignored,
-                           final ExecutionContext executionContext) {
+        final ExecutionContext executionContext) {
       switch (spot) {
         case BEFORE_BUILD_CUMULATIVE_RESULT:
           if (!triggeredOOME) {
             InternalResourceManager resourceManager =
-                (InternalResourceManager) getCache().getResourceManager();
+                (InternalResourceManager) cache.getResourceManager();
             resourceManager.getHeapMonitor().updateStateAndSendEvent(CRITICAL_HEAP_USED, "test");
             triggeredOOME = true;
             try {
