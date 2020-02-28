@@ -24,6 +24,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.MAX_WAIT_TIME
 import static org.apache.geode.distributed.ConfigurationProperties.MEMBER_TIMEOUT;
 import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTCPPorts;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
+import static org.apache.geode.test.dunit.Disconnect.disconnectAllFromDS;
 import static org.apache.geode.test.dunit.VM.getVM;
 import static org.apache.geode.test.dunit.VM.getVMId;
 import static org.apache.geode.test.dunit.VM.toArray;
@@ -32,7 +33,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.After;
 import org.junit.Before;
@@ -68,8 +68,9 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   private static final String SERVER4_NAME = "server4";
   private static final String SERVER5_NAME = "server5";
   private static final String SERVER6_NAME = "server6";
-  private static final AtomicReference<LocatorLauncher> LOCATOR_LAUNCHER = new AtomicReference<>();
-  private static final AtomicReference<ServerLauncher> SERVER_LAUNCHER = new AtomicReference<>();
+
+  private static LocatorLauncher locatorLauncher;
+  private static ServerLauncher serverLauncher;
 
   private VM locator;
   private VM server1;
@@ -155,10 +156,18 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   public void tearDown() {
 
     for (VM vm : toArray(server1, server2, server3, server4, server5, server6)) {
-      vm.invoke(() -> SERVER_LAUNCHER.get().getCache().close());
+      vm.invoke(() -> {
+        serverLauncher.stop();
+        serverLauncher = null;
+      });
     }
 
-    locator.invoke(() -> LOCATOR_LAUNCHER.get().getCache().close());
+    locator.invoke(() -> {
+      locatorLauncher.stop();
+      locatorLauncher = null;
+    });
+
+    disconnectAllFromDS();
   }
 
   @Test
@@ -199,7 +208,7 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
     server6.invoke(() -> startServer(SERVER6_NAME, server6Dir, locatorString));
 
     server1.invoke(() -> {
-      SERVER_LAUNCHER.get().stop();
+      serverLauncher.stop();
       startServer(SERVER1_NAME, server1Dir, locatorString);
     });
 
@@ -217,7 +226,7 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   }
 
   private void addDataToRegion() {
-    Cache cache = SERVER_LAUNCHER.get().getCache();
+    Cache cache = serverLauncher.getCache();
     Region<String, String> region = cache.getRegion(PARENT_REGION);
     Region<String, String> colocatedRegionOne = cache.getRegion(COLOCATED_REGION_ONE);
     Region<String, String> colocatedRegionTwo = cache.getRegion(COLOCATED_REGION_TWO);
@@ -282,7 +291,7 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   }
 
   private void startLocator(File directory, int port, int jmxPort, int httpPort) {
-    LOCATOR_LAUNCHER.set(new LocatorLauncher.Builder()
+    locatorLauncher = new LocatorLauncher.Builder()
         .setMemberName(LOCATOR_NAME)
         .setPort(port)
         .setWorkingDirectory(directory.getAbsolutePath())
@@ -293,12 +302,12 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
         .set(LOG_FILE, new File(directory, LOCATOR_NAME + ".log").getAbsolutePath())
         .set(MAX_WAIT_TIME_RECONNECT, "1000")
         .set(MEMBER_TIMEOUT, "2000")
-        .build());
+        .build();
 
-    LOCATOR_LAUNCHER.get().start();
+    locatorLauncher.start();
 
     await().untilAsserted(() -> {
-      InternalLocator locator = (InternalLocator) LOCATOR_LAUNCHER.get().getLocator();
+      InternalLocator locator = (InternalLocator) locatorLauncher.getLocator();
       assertThat(locator.isSharedConfigurationRunning())
           .as("Locator shared configuration is running on locator" + getVMId())
           .isTrue();
@@ -306,7 +315,7 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   }
 
   private void startServer(String name, File workingDirectory, String locator) {
-    SERVER_LAUNCHER.set(new ServerLauncher.Builder()
+    serverLauncher = new ServerLauncher.Builder()
         .setDisableDefaultServer(true)
         .setMemberName(name)
         .setWorkingDirectory(workingDirectory.getAbsolutePath())
@@ -316,8 +325,8 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
         .set(LOG_FILE, new File(workingDirectory, name + ".log").getAbsolutePath())
         .set(MAX_WAIT_TIME_RECONNECT, "1000")
         .set(MEMBER_TIMEOUT, "2000")
-        .build());
+        .build();
 
-    SERVER_LAUNCHER.get().start();
+    serverLauncher.start();
   }
 }
