@@ -26,6 +26,7 @@ import static org.apache.geode.internal.AvailablePortHelper.getRandomAvailableTC
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
 import static org.apache.geode.test.dunit.VM.getVM;
 import static org.apache.geode.test.dunit.VM.getVMId;
+import static org.apache.geode.test.dunit.VM.toArray;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.File;
@@ -33,6 +34,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -69,7 +71,11 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   private static final AtomicReference<LocatorLauncher> LOCATOR_LAUNCHER = new AtomicReference<>();
   private static final AtomicReference<ServerLauncher> SERVER_LAUNCHER = new AtomicReference<>();
 
+  private VM locator;
   private VM server1;
+  private VM server2;
+  private VM server3;
+  private VM server4;
   private VM server5;
   private VM server6;
   private File server1Dir;
@@ -91,11 +97,11 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   @Before
   public void before() throws Exception {
 
-    VM locator = getVM(0);
+    locator = getVM(0);
     server1 = getVM(1);
-    VM server2 = getVM(2);
-    VM server3 = getVM(3);
-    VM server4 = getVM(4);
+    server2 = getVM(2);
+    server3 = getVM(3);
+    server4 = getVM(4);
     server5 = getVM(5);
     server6 = getVM(6);
 
@@ -143,6 +149,16 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
         + " --partition-resolver=" + PARTITION_RESOLVER
         + " --colocated-with=" + COLOCATED_REGION_ONE)
         .statusIsSuccess();
+  }
+
+  @After
+  public void tearDown() {
+
+    for (VM vm : toArray(server1, server2, server3, server4, server5, server6)) {
+      vm.invoke(() -> SERVER_LAUNCHER.get().getCache().close());
+    }
+
+    locator.invoke(() -> LOCATOR_LAUNCHER.get().getCache().close());
   }
 
   @Test
