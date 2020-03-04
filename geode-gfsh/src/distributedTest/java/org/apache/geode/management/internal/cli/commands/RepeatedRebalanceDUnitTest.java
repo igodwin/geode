@@ -166,8 +166,6 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
       locatorLauncher.stop();
       locatorLauncher = null;
     });
-
-    disconnectAllFromDS();
   }
 
   @Test
