@@ -33,6 +33,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
 
+import org.apache.logging.log4j.Logger;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -43,6 +44,7 @@ import org.apache.geode.cache.Region;
 import org.apache.geode.distributed.LocatorLauncher;
 import org.apache.geode.distributed.ServerLauncher;
 import org.apache.geode.distributed.internal.InternalLocator;
+import org.apache.geode.logging.internal.log4j.api.LogService;
 import org.apache.geode.management.internal.i18n.CliStrings;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.dunit.rules.DistributedRule;
@@ -52,6 +54,7 @@ import org.apache.geode.test.junit.rules.GfshCommandRule.PortType;
 import org.apache.geode.test.junit.rules.serializable.SerializableTemporaryFolder;
 
 public class RepeatedRebalanceDUnitTest implements Serializable {
+  protected static final Logger logger = LogService.getLogger();
   private static final String PARENT_REGION = "RepeatedRebalanceTestRegion";
   private static final String COLOCATED_REGION_ONE = "RepeatedRebalanceColocatedRegionOne";
   private static final String COLOCATED_REGION_TWO = "RepeatedRebalanceColocatedRegionTwo";
@@ -195,96 +198,158 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
 
   @Test
   public void testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers() throws IOException {
-
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 1");
     server1.invoke(this::addDataToRegion);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 2");
 
     File server5Dir = temporaryFolder.newFolder(SERVER5_NAME);
     File server6Dir = temporaryFolder.newFolder(SERVER6_NAME);
 
     server5.invoke(() -> startServer(SERVER5_NAME, server5Dir, locatorString));
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 3");
+
     server6.invoke(() -> startServer(SERVER6_NAME, server6Dir, locatorString));
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 4");
 
     server1.invoke(() -> {
+      logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 5");
+
       serverLauncher.stop();
+      logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 6");
+
       startServer(SERVER1_NAME, server1Dir, locatorString);
+      logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 7");
+
     });
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 8");
 
     TabularResultModelAssert firstRebalance =
         gfsh.executeAndAssertThat("rebalance").statusIsSuccess().hasTableSection("Table2");
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 10");
+
     assertRedundancyChanged(firstRebalance);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 11");
+
     assertBucketsMoved(firstRebalance);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 12");
+
     assertPrimariesTransfered(firstRebalance);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 13");
+
 
     TabularResultModelAssert secondRebalance =
         gfsh.executeAndAssertThat("rebalance").statusIsSuccess().hasTableSection("Table2");
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 14");
+
     assertRedundancyNotChanged(secondRebalance);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 15");
+
     assertBucketsNotMoved(secondRebalance);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 16");
+
     assertPrimariesNotTransfered(secondRebalance);
+    logger.info("IG testSecondRebalanceIsNotNecessaryWithAddedAndRestartedMembers 17");
+
   }
 
   private void addDataToRegion() {
+    logger.info("IG addDataToRegion 1");
+
     Cache cache = serverLauncher.getCache();
+    logger.info("IG addDataToRegion 1");
     Region<String, String> region = cache.getRegion(PARENT_REGION);
+    logger.info("IG addDataToRegion 2");
     Region<String, String> colocatedRegionOne = cache.getRegion(COLOCATED_REGION_ONE);
+    logger.info("IG addDataToRegion 3");
     Region<String, String> colocatedRegionTwo = cache.getRegion(COLOCATED_REGION_TWO);
+    logger.info("IG addDataToRegion 4");
 
     for (int i = 0; i < NUMBER_OF_ENTRIES; i++) {
+      logger.info("IG addDataToRegion 5 key = " + "key" + i + " Value = " + "value" + i);
       region.put("key" + i, "value" + i);
+      logger.info("IG addDataToRegion 6 put to region 1");
       colocatedRegionOne.put("key" + i, "value" + i);
+      logger.info("IG addDataToRegion 7 put to region 2");
       colocatedRegionTwo.put("key" + i, "value" + i);
+      logger.info("IG addDataToRegion 8");
     }
+    logger.info("IG addDataToRegion 9");
   }
 
   private void assertRedundancyChanged(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("IG assertRedundancyChanged 1" + tabularResultModelAssert.toString());
     tabularResultModelAssert.hasRow(0).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATEBYTES).last().isNotEqualTo("0");
+    logger.info("IG assertRedundancyChanged 2");
     tabularResultModelAssert.hasRow(1).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATETIM).last().isNotEqualTo("0");
+    logger.info("IG assertRedundancyChanged 3");
     tabularResultModelAssert.hasRow(2).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATESCOMPLETED).last().isNotEqualTo("0");
+    logger.info("IG assertRedundancyChanged 4");
   }
 
   private void assertRedundancyNotChanged(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("IG assertRedundancyNotChanged 1 row 0 = " + tabularResultModelAssert.toString());
     tabularResultModelAssert.hasRow(0)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATEBYTES, "0");
+    logger.info("IG assertRedundancyNotChanged 2");
     tabularResultModelAssert.hasRow(1)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATETIM, "0");
+    logger.info("IG assertRedundancyNotChanged 3");
     tabularResultModelAssert.hasRow(2)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATESCOMPLETED, "0");
+    logger.info("IG assertRedundancyNotChanged 4");
   }
 
   private void assertBucketsMoved(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("IG assertBucketsMoved 1" + tabularResultModelAssert.toString());
     tabularResultModelAssert.hasRow(3).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALBUCKETTRANSFERBYTES).last().isNotEqualTo("0");
+    logger.info("IG assertBucketsMoved 2");
     tabularResultModelAssert.hasRow(4).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALBUCKETTRANSFERTIME).last().isNotEqualTo("0");
+    logger.info("IG assertBucketsMoved 3");
     tabularResultModelAssert.hasRow(5).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALBUCKETTRANSFERSCOMPLETED).last()
         .isNotEqualTo("0");
+    logger.info("IG assertBucketsMoved 4");
+
   }
 
   private void assertBucketsNotMoved(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("IG assertBucketsNotMoved 1 " + tabularResultModelAssert);
+
     tabularResultModelAssert.hasRow(3)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETTRANSFERBYTES, "0");
+    logger.info("IG assertBucketsNotMoved 2");
     tabularResultModelAssert.hasRow(4)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETTRANSFERTIME, "0");
+    logger.info("IG assertBucketsNotMoved 3");
     tabularResultModelAssert.hasRow(5)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETTRANSFERSCOMPLETED, "0");
+    logger.info("IG assertBucketsNotMoved 4");
   }
 
   private void assertPrimariesTransfered(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("IG assertPrimariesTransfered 1 " + tabularResultModelAssert);
     tabularResultModelAssert.hasRow(6).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALPRIMARYTRANSFERTIME).last().isNotEqualTo("0");
+    logger.info("IG assertPrimariesTransfered 2");
     tabularResultModelAssert.hasRow(7).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALPRIMARYTRANSFERSCOMPLETED).last()
         .isNotEqualTo("0");
+    logger.info("IG assertPrimariesTransfered 3");
   }
 
   private void assertPrimariesNotTransfered(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("IG assertPrimariesNotTransfered 1");
     tabularResultModelAssert.hasRow(6)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALPRIMARYTRANSFERTIME, "0");
+    logger.info("IG assertPrimariesNotTransfered 2");
     tabularResultModelAssert.hasRow(7)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALPRIMARYTRANSFERSCOMPLETED, "0");
+    logger.info("IG assertPrimariesNotTransfered 3");
   }
 
   private void startLocator(File directory, int port, int jmxPort, int httpPort) {
