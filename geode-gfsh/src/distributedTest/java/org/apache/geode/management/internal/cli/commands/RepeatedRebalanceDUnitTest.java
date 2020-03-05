@@ -332,7 +332,7 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   }
 
   private void assertPrimariesTransfered(TabularResultModelAssert tabularResultModelAssert) {
-    logger.info("IG assertPrimariesTransfered 1 " + tabularResultModelAssert);
+    logger.info("IG assertPrimariesTransfered 1 " + tabularResultModelAssert.toString());
     tabularResultModelAssert.hasRow(6).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALPRIMARYTRANSFERTIME).last().isNotEqualTo("0");
     logger.info("IG assertPrimariesTransfered 2");
