@@ -260,7 +260,8 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   }
 
   private void assertRedundancyNotChanged(TabularResultModelAssert tabularResultModelAssert) {
-    logger.info("******************* assertRedundancyNotChanged 1 row 0 = " + tabularResultModelAssert.toString());
+    logger.info("******************* assertRedundancyNotChanged 1 row 0 = "
+        + tabularResultModelAssert.toString());
     tabularResultModelAssert.hasRow(0)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATEBYTES, "0");
     tabularResultModelAssert.hasRow(1)
