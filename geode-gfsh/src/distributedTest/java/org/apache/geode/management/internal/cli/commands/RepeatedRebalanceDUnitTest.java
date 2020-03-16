@@ -261,7 +261,7 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
 
   private void assertRedundancyNotChanged(TabularResultModelAssert tabularResultModelAssert) {
     logger.info("******************* assertRedundancyNotChanged 1 row 0 = "
-        + tabularResultModelAssert.toString());
+        + tabularResultModelAssert.getActual().getContent() + " finished *******************");
     tabularResultModelAssert.hasRow(0)
         .containsExactly(CliStrings.REBALANCE__MSG__TOTALBUCKETCREATEBYTES, "0");
     tabularResultModelAssert.hasRow(1)
@@ -292,6 +292,8 @@ public class RepeatedRebalanceDUnitTest implements Serializable {
   }
 
   private void assertPrimariesTransfered(TabularResultModelAssert tabularResultModelAssert) {
+    logger.info("******************* assertPrimariesTransfered 1 row 0 = "
+        + tabularResultModelAssert.getActual().getContent() + " finished *******************");
     tabularResultModelAssert.hasRow(6).asList()
         .contains(CliStrings.REBALANCE__MSG__TOTALPRIMARYTRANSFERTIME).last().isNotEqualTo("0");
     tabularResultModelAssert.hasRow(7).asList()
