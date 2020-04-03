@@ -14,6 +14,7 @@
  */
 package org.apache.geode.internal.cache.tier.sockets;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static org.apache.geode.distributed.ConfigurationProperties.DURABLE_CLIENT_ID;
 import static org.apache.geode.distributed.ConfigurationProperties.DURABLE_CLIENT_TIMEOUT;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
@@ -39,9 +40,13 @@ import org.junit.experimental.categories.Category;
 
 import org.apache.geode.cache.InterestResultPolicy;
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.RegionShortcut;
+import org.apache.geode.cache.Scope;
 import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolFactory;
 import org.apache.geode.cache.client.PoolManager;
+import org.apache.geode.cache.client.internal.InternalClientCache;
+import org.apache.geode.cache.client.internal.PoolImpl;
 import org.apache.geode.cache.query.CqAttributes;
 import org.apache.geode.cache.query.CqAttributesFactory;
 import org.apache.geode.cache.query.CqException;
@@ -51,13 +56,18 @@ import org.apache.geode.cache.query.CqQuery;
 import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.internal.DistributionConfig;
+import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.cache.CacheServerImpl;
+import org.apache.geode.internal.cache.ClientServerObserverAdapter;
+import org.apache.geode.internal.cache.ClientServerObserverHolder;
+import org.apache.geode.internal.cache.InternalCache;
 import org.apache.geode.internal.cache.InternalCacheServer;
 import org.apache.geode.internal.cache.PoolFactoryImpl;
 import org.apache.geode.test.dunit.IgnoredException;
 import org.apache.geode.test.dunit.NetworkUtils;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.dunit.rules.CacheRule;
+import org.apache.geode.test.dunit.rules.ClientCacheRule;
 import org.apache.geode.test.dunit.rules.DistributedRestoreSystemProperties;
 import org.apache.geode.test.dunit.rules.DistributedRule;
 import org.apache.geode.test.junit.categories.ClientSubscriptionTest;
@@ -72,9 +82,12 @@ import org.apache.geode.util.internal.GeodeGlossary;
  */
 @Category({ClientSubscriptionTest.class})
 public class DurableClientTestCase implements Serializable {
-  private static final int HEAVY_TEST_LOAD_DELAY_SUPPORT_MULTIPLIER = 10;
+//  private static final int HEAVY_TEST_LOAD_DELAY_SUPPORT_MULTIPLIER = 10;
   private static final int VERY_LONG_DURABLE_TIMEOUT_SECONDS =
       (int) Duration.ofMinutes(10).getSeconds();
+
+  private static InternalCache cache;
+  private static InternalClientCache clientCache;
 
   private String regionName;
   private VM server1;
@@ -89,6 +102,9 @@ public class DurableClientTestCase implements Serializable {
 
   @Rule
   public CacheRule cacheRule = new CacheRule();
+
+  @Rule
+  public ClientCacheRule clientCacheRule = new ClientCacheRule();
 
   @Rule
   public DistributedRestoreSystemProperties restoreSystemProperties =
@@ -138,7 +154,8 @@ public class DurableClientTestCase implements Serializable {
     properties.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "SPECIAL_DURABLE", "true");
 
     server1Port = server1
-        .invoke(() -> CacheServerTestUtil.createCacheServer(regionName, Boolean.TRUE));
+        .invoke(() -> createServerCache());
+//            CacheServerTestUtil.createCacheServer(regionName, Boolean.TRUE));
 
     durableClientId = serializableTestName.getMethodName() + "_client";
     final String dId = durableClientId + "_gem_" + "CacheServerTestUtil";
@@ -561,12 +578,10 @@ public class DurableClientTestCase implements Serializable {
   private void durableFailover(int redundancyLevel) {
 
     // Start server 1
-    server1Port = server1.invoke(
-        () -> CacheServerTestUtil.createCacheServer(regionName, Boolean.TRUE));
+    server1Port = server1.invoke(() -> createServerCache());
 
     // Start server 2 using the same mcast port as server 1
-    final int server2Port = server2
-        .invoke(() -> CacheServerTestUtil.createCacheServer(regionName, Boolean.TRUE));
+    int server2Port = server2.invoke(() -> createServerCache());
 
     // Stop server 2
     server2.invoke(() -> cacheRule.closeAndNullCache());
@@ -999,7 +1014,45 @@ public class DurableClientTestCase implements Serializable {
     });
   }
 
-  protected void closeCache(VM vm) {
-    vm.invoke(() -> cacheRule.closeAndNullCache());
+  private void createClientCache(int redundancy) {
+    Properties props = new Properties();
+    props.setProperty(MCAST_PORT, "0");
+    props.setProperty(LOCATORS, "");
+
+    clientCache = clientCacheRule.getOrCreateCache(props);
+
+    PoolImpl pool = (PoolImpl) PoolManager.createFactory()
+        .addServer(hostname, port0)
+        .addServer(hostname, port1)
+        .addServer(hostname, port2)
+        .addServer(hostname, port3)
+        .setSubscriptionEnabled(true)
+        .setReadTimeout(3000)
+        .setSocketBufferSize(32768)
+        .setMinConnections(8)
+        .setSubscriptionRedundancy(redundancy)
+        .setRetryAttempts(5)
+        .setPingInterval(10)
+        .create("DurableClientReconnectDUnitTestPool");
+
+    clientCache.createRegionFactory()
+        .setScope(Scope.DISTRIBUTED_ACK)
+        .setPoolName(pool.getName())
+        .create(regionName);
+  }
+
+  private int createServerCache() throws Exception {
+    cache = cacheRule.getOrCreateCache();
+
+    cache.createRegionFactory(RegionShortcut.REPLICATE).setEnableSubscriptionConflation(true)
+        .create(regionName);
+
+    CacheServer cacheServer = cache.addCacheServer();
+
+    cacheServer.setMaximumTimeBetweenPings(180000);
+    cacheServer.setPort(0);
+    cacheServer.start();
+
+    return cacheServer.getPort();
   }
 }
