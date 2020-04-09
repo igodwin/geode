@@ -19,6 +19,7 @@ import static org.apache.geode.distributed.ConfigurationProperties.DURABLE_CLIEN
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.test.awaitility.GeodeAwaitility.await;
+import static org.apache.geode.test.dunit.Disconnect.disconnectAllFromDS;
 import static org.apache.geode.test.dunit.VM.getVM;
 import static org.apache.geode.test.dunit.VM.toArray;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -123,9 +124,14 @@ public class DurableClientTestCase implements Serializable {
 
   @After
   public void tearDown() {
-    for (VM vm : toArray(durableClient, publisherClient, server1, server2)) {
-      vm.invoke(() -> cacheRule.closeAndNullCache());
+    for (VM client : toArray(durableClient, publisherClient)) {
+      client.invoke(() -> clientCacheRule.getClientCache().close());
     }
+    for (VM server : toArray(server1, server2)) {
+      server.invoke(() -> cacheRule.closeAndNullCache());
+    }
+
+    disconnectAllFromDS();
   }
 
   /**
@@ -148,14 +154,15 @@ public class DurableClientTestCase implements Serializable {
   @Test
   public void testSpecialDurableProperty() {
     final Properties properties = new Properties();
-    properties.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "SPECIAL_DURABLE", "true");
 
-    server1Port = server1.invoke(() -> createServerCache());
+    server1Port = server1.invoke(() -> createCacheServer());
     // CacheServerTestUtil.createCacheServer(regionName, Boolean.TRUE));
 
     durableClientId = serializableTestName.getMethodName() + "_client";
     final String dId = durableClientId + "_gem_" + "CacheServerTestUtil";
 
+    durableClient.invoke(() -> createClientCache(getClientDistributedSystemProperties(durableClientId,
+        DistributionConfig.DEFAULT_DURABLE_CLIENT_TIMEOUT), Boolean.TRUE));
     durableClient.invoke(() -> CacheServerTestUtil.createCacheClient(
         getClientPool(NetworkUtils.getServerHostName(), server1Port, Boolean.TRUE),
         regionName, getClientDistributedSystemProperties(durableClientId,
@@ -163,7 +170,7 @@ public class DurableClientTestCase implements Serializable {
         Boolean.TRUE, properties));
 
     durableClient.invoke(() -> {
-      await().untilAsserted(() -> assertThat(cacheRule.getCache()).isNotNull());
+      await().untilAsserted(() -> assertThat(clientCacheRule.getClientCache()).isNotNull());
 
       // .atMost(1 * HEAVY_TEST_LOAD_DELAY_SUPPORT_MULTIPLIER, MINUTES)
       // .pollInterval(100, MILLISECONDS)
@@ -578,10 +585,10 @@ public class DurableClientTestCase implements Serializable {
   private void durableFailover(int redundancyLevel) {
 
     // Start server 1
-    server1Port = server1.invoke(() -> createServerCache());
+    server1Port = server1.invoke(() -> createCacheServer());
 
     // Start server 2 using the same mcast port as server 1
-    int server2Port = server2.invoke(() -> createServerCache());
+    int server2Port = server2.invoke(() -> createCacheServer());
 
     // Stop server 2
     server2.invoke(() -> cacheRule.closeAndNullCache());
@@ -788,7 +795,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private void startupDurableClientAndServer(final int durableClientTimeout) {
-    server1Port = server1.invoke(() -> createServerCache());
+    server1Port = server1.invoke(() -> createCacheServer());
 
     durableClientId = serializableTestName.getMethodName() + "_client";
     startupDurableClient(durableClientTimeout,
@@ -798,7 +805,7 @@ public class DurableClientTestCase implements Serializable {
 
   private void startupDurableClient(int durableClientTimeout) {
     durableClient.invoke(() -> createClientCache(
-        getClientDistributedSystemProperties(durableClientId, durableClientTimeout),));
+        getClientDistributedSystemProperties(durableClientId, durableClientTimeout), Boolean.FALSE));
 
 //        CacheServerTestUtil.createCacheClient(
 //        clientPool,
@@ -990,13 +997,16 @@ public class DurableClientTestCase implements Serializable {
     });
   }
 
-  private void createClientCache(Properties gemfireProperties, Properties systemProperties) {
+  private void createClientCache(Properties gemfireProperties, Boolean useSpecialProperties) {
     clientCacheRule.createClientCache(gemfireProperties);
     clientCache = clientCacheRule.getClientCache();
 
-    System.setProperties(systemProperties);
+    if (useSpecialProperties) {
+      System.setProperty(GeodeGlossary.GEMFIRE_PREFIX + "SPECIAL_DURABLE", "true");
+    }
 
     pool = (PoolImpl) PoolManager.createFactory()
+        .addServer(NetworkUtils.getServerHostName(), server1Port)
         .create("DurableClientReconnectDUnitTestPool");
 
     clientCache.createClientRegionFactory(ClientRegionShortcut.LOCAL)
@@ -1005,7 +1015,7 @@ public class DurableClientTestCase implements Serializable {
         .create(regionName);
   }
 
-  private int createServerCache() throws Exception {
+  private int createCacheServer() throws Exception {
     cache = cacheRule.getOrCreateCache();
 
     cache.createRegionFactory(RegionShortcut.REPLICATE).setEnableSubscriptionConflation(true)
