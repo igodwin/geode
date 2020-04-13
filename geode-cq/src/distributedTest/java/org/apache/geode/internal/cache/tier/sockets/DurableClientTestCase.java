@@ -47,13 +47,6 @@ import org.apache.geode.cache.client.PoolFactory;
 import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache.client.internal.InternalClientCache;
 import org.apache.geode.cache.client.internal.PoolImpl;
-import org.apache.geode.cache.query.CqAttributes;
-import org.apache.geode.cache.query.CqAttributesFactory;
-import org.apache.geode.cache.query.CqException;
-import org.apache.geode.cache.query.CqExistsException;
-import org.apache.geode.cache.query.CqListener;
-import org.apache.geode.cache.query.CqQuery;
-import org.apache.geode.cache.query.QueryService;
 import org.apache.geode.cache.server.CacheServer;
 import org.apache.geode.distributed.internal.DistributionConfig;
 import org.apache.geode.internal.cache.CacheServerImpl;
@@ -161,8 +154,9 @@ public class DurableClientTestCase implements Serializable {
     durableClientId = serializableTestName.getMethodName() + "_client";
     final String dId = durableClientId + "_gem_" + "CacheServerTestUtil";
 
-    durableClient.invoke(() -> createClientCache(getClientDistributedSystemProperties(durableClientId,
-        DistributionConfig.DEFAULT_DURABLE_CLIENT_TIMEOUT), Boolean.TRUE));
+    durableClient
+        .invoke(() -> createClientCache(getClientDistributedSystemProperties(durableClientId,
+            DistributionConfig.DEFAULT_DURABLE_CLIENT_TIMEOUT), Boolean.TRUE));
     durableClient.invoke(() -> CacheServerTestUtil.createCacheClient(
         getClientPool(NetworkUtils.getServerHostName(), server1Port, Boolean.TRUE),
         regionName, getClientDistributedSystemProperties(durableClientId,
@@ -679,7 +673,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private void waitUntilQueueContainsRequiredNumberOfEvents(final VM vm,
-                                                            final int requiredEntryCount) {
+      final int requiredEntryCount) {
     vm.invoke(() -> {
       await().until(() -> {
         CacheClientProxy proxy = getClientProxy();
@@ -794,7 +788,7 @@ public class DurableClientTestCase implements Serializable {
     await().until(() -> ccn.getClientProxies().size() == 1);
   }
 
-  private void startupDurableClientAndServer(final int durableClientTimeout) {
+  private void startupDurableClientAndServer(int durableClientTimeout) {
     server1Port = server1.invoke(() -> createCacheServer());
 
     durableClientId = serializableTestName.getMethodName() + "_client";
@@ -805,12 +799,13 @@ public class DurableClientTestCase implements Serializable {
 
   private void startupDurableClient(int durableClientTimeout) {
     durableClient.invoke(() -> createClientCache(
-        getClientDistributedSystemProperties(durableClientId, durableClientTimeout), Boolean.FALSE));
+        getClientDistributedSystemProperties(durableClientId, durableClientTimeout),
+        Boolean.FALSE));
 
-//        CacheServerTestUtil.createCacheClient(
-//        clientPool,
-//        regionName, getClientDistributedSystemProperties(durableClientId, durableClientTimeout),
-//        addControlListener));
+    // CacheServerTestUtil.createCacheClient(
+    // clientPool,
+    // regionName, getClientDistributedSystemProperties(durableClientId, durableClientTimeout),
+    // addControlListener));
 
     durableClient.invoke(() -> {
       await().untilAsserted(() -> assertThat(clientCacheRule.getClientCache()).isNotNull());
@@ -825,17 +820,17 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private void verifyDurableClientPresent(int durableClientTimeout, String durableClientId,
-                                          final VM serverVM) {
+      final VM serverVM) {
     verifyDurableClientPresence(durableClientTimeout, durableClientId, serverVM, 1);
   }
 
   private void verifyDurableClientNotPresent(int durableClientTimeout, String durableClientId,
-                                             final VM serverVM) {
+      final VM serverVM) {
     verifyDurableClientPresence(durableClientTimeout, durableClientId, serverVM, 0);
   }
 
   private void verifyDurableClientPresence(int durableClientTimeout, String durableClientId,
-                                           VM serverVM, final int count) {
+      VM serverVM, final int count) {
     serverVM.invoke(() -> {
       checkNumberOfClientProxies(count);
 
@@ -870,44 +865,44 @@ public class DurableClientTestCase implements Serializable {
           .info(st + " CCP states: " + getAllClientProxyState());
       CacheServerTestUtil.getCache().getLogger().info(st + " CHM states: "
           + printMap(
-          ClientHealthMonitor.getInstance().getConnectedClients(null)));
+              ClientHealthMonitor.getInstance().getConnectedClients(null)));
     });
   }
-
-  /*
-   * Due to the way removal from ha region queue is implemented a dummy cq or interest needs to be
-   * created and a dummy value used so that none of the actual cqs will be triggered and yet an
-   * event will flush the queue
-   */
-  private void flushEntries(VM server, VM client, final String regionName) {
-    // This wait is to make sure that all acks have been responded to...
-    // We can add a stat later on the cache client proxy stats that checks
-    // ack counts
-    try {
-      Thread.sleep(2000);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
-
-    registerInterest(client, regionName, false, InterestResultPolicy.NONE);
-    server.invoke(() -> {
-      Region<String, String> region = CacheServerTestUtil.getCache().getRegion(regionName);
-      assertThat(region).isNotNull();
-      // assertNotNull(region);
-      region.put("LAST", "ENTRY");
-    });
-  }
-
-  private CqQuery createCq(String cqName, String cqQuery, boolean durable)
-      throws CqException, CqExistsException {
-    QueryService qs = CacheServerTestUtil.getCache().getQueryService();
-    CqAttributesFactory cqf = new CqAttributesFactory();
-    CqListener[] cqListeners = {new CacheServerTestUtil.ControlCqListener()};
-    cqf.initCqListeners(cqListeners);
-    CqAttributes cqa = cqf.create();
-    return qs.newCq(cqName, cqQuery, cqa, durable);
-
-  }
+  //
+  // /*
+  // * Due to the way removal from ha region queue is implemented a dummy cq or interest needs to be
+  // * created and a dummy value used so that none of the actual cqs will be triggered and yet an
+  // * event will flush the queue
+  // */
+  // private void flushEntries(VM server, VM client, final String regionName) {
+  // // This wait is to make sure that all acks have been responded to...
+  // // We can add a stat later on the cache client proxy stats that checks
+  // // ack counts
+  // try {
+  // Thread.sleep(2000);
+  // } catch (InterruptedException e) {
+  // Thread.currentThread().interrupt();
+  // }
+  //
+  // registerInterest(client, regionName, false, InterestResultPolicy.NONE);
+  // server.invoke(() -> {
+  // Region<String, String> region = CacheServerTestUtil.getCache().getRegion(regionName);
+  // assertThat(region).isNotNull();
+  // // assertNotNull(region);
+  // region.put("LAST", "ENTRY");
+  // });
+  // }
+  //
+  // private CqQuery createCq(String cqName, String cqQuery, boolean durable)
+  // throws CqException, CqExistsException {
+  // QueryService qs = CacheServerTestUtil.getCache().getQueryService();
+  // CqAttributesFactory cqf = new CqAttributesFactory();
+  // CqListener[] cqListeners = {new CacheServerTestUtil.ControlCqListener()};
+  // cqf.initCqListeners(cqListeners);
+  // CqAttributes cqa = cqf.create();
+  // return qs.newCq(cqName, cqQuery, cqa, durable);
+  //
+  // }
 
   private Pool getClientPool(String host, int serverPort, boolean establishCallbackConnection) {
     PoolFactory pf = PoolManager.createFactory();
@@ -917,7 +912,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private Pool getClientPool(String host, int server1Port, int server2Port,
-                             boolean establishCallbackConnection) {
+      boolean establishCallbackConnection) {
     return getClientPool(host, server1Port, server2Port, establishCallbackConnection, 1);
   }
 
@@ -927,7 +922,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private Properties getClientDistributedSystemProperties(String durableClientId,
-                                                          int durableClientTimeout) {
+      int durableClientTimeout) {
     Properties properties = new Properties();
     properties.setProperty(MCAST_PORT, "0");
     properties.setProperty(LOCATORS, "");
@@ -937,7 +932,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private Pool getClientPool(String host, int server1Port, int server2Port,
-                             boolean establishCallbackConnection, int redundancyLevel) {
+      boolean establishCallbackConnection, int redundancyLevel) {
     PoolFactory pf = PoolManager.createFactory();
     pf.addServer(host, server1Port).addServer(host, server2Port)
         .setSubscriptionEnabled(establishCallbackConnection)
@@ -946,7 +941,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private void registerInterest(VM vm, final String regionName, final boolean durable,
-                                final InterestResultPolicy interestResultPolicy) {
+      final InterestResultPolicy interestResultPolicy) {
     vm.invoke(() -> {
       Region<Object, Object> region = CacheServerTestUtil.getCache().getRegion(regionName);
       assertThat(region).isNotNull();
@@ -982,7 +977,7 @@ public class DurableClientTestCase implements Serializable {
   }
 
   private void checkListenerEvents(int numberOfEntries, final int sleepMinutes, final int eventType,
-                                   final VM vm) {
+      final VM vm) {
     vm.invoke(() -> {
       // Get the region
       Region<Object, Object> region = CacheServerTestUtil.getCache().getRegion(regionName);
@@ -1007,6 +1002,8 @@ public class DurableClientTestCase implements Serializable {
 
     pool = (PoolImpl) PoolManager.createFactory()
         .addServer(NetworkUtils.getServerHostName(), server1Port)
+        .setSubscriptionEnabled(Boolean.TRUE)
+        .setSubscriptionAckInterval(1)
         .create("DurableClientReconnectDUnitTestPool");
 
     clientCache.createClientRegionFactory(ClientRegionShortcut.LOCAL)
