@@ -156,7 +156,7 @@ public class DurableClientTestCase implements Serializable {
 
     durableClient
         .invoke(() -> createClientCache(getClientDistributedSystemProperties(durableClientId,
-            DistributionConfig.DEFAULT_DURABLE_CLIENT_TIMEOUT), Boolean.TRUE));
+            DistributionConfig.DEFAULT_DURABLE_CLIENT_TIMEOUT), Boolean.TRUE, 0));
     durableClient.invoke(() -> CacheServerTestUtil.createCacheClient(
         getClientPool(NetworkUtils.getServerHostName(), server1Port, Boolean.TRUE),
         regionName, getClientDistributedSystemProperties(durableClientId,
@@ -800,7 +800,7 @@ public class DurableClientTestCase implements Serializable {
   private void startupDurableClient(int durableClientTimeout) {
     durableClient.invoke(() -> createClientCache(
         getClientDistributedSystemProperties(durableClientId, durableClientTimeout),
-        Boolean.FALSE));
+        Boolean.FALSE, 0));
 
     // CacheServerTestUtil.createCacheClient(
     // clientPool,
@@ -868,41 +868,6 @@ public class DurableClientTestCase implements Serializable {
               ClientHealthMonitor.getInstance().getConnectedClients(null)));
     });
   }
-  //
-  // /*
-  // * Due to the way removal from ha region queue is implemented a dummy cq or interest needs to be
-  // * created and a dummy value used so that none of the actual cqs will be triggered and yet an
-  // * event will flush the queue
-  // */
-  // private void flushEntries(VM server, VM client, final String regionName) {
-  // // This wait is to make sure that all acks have been responded to...
-  // // We can add a stat later on the cache client proxy stats that checks
-  // // ack counts
-  // try {
-  // Thread.sleep(2000);
-  // } catch (InterruptedException e) {
-  // Thread.currentThread().interrupt();
-  // }
-  //
-  // registerInterest(client, regionName, false, InterestResultPolicy.NONE);
-  // server.invoke(() -> {
-  // Region<String, String> region = CacheServerTestUtil.getCache().getRegion(regionName);
-  // assertThat(region).isNotNull();
-  // // assertNotNull(region);
-  // region.put("LAST", "ENTRY");
-  // });
-  // }
-  //
-  // private CqQuery createCq(String cqName, String cqQuery, boolean durable)
-  // throws CqException, CqExistsException {
-  // QueryService qs = CacheServerTestUtil.getCache().getQueryService();
-  // CqAttributesFactory cqf = new CqAttributesFactory();
-  // CqListener[] cqListeners = {new CacheServerTestUtil.ControlCqListener()};
-  // cqf.initCqListeners(cqListeners);
-  // CqAttributes cqa = cqf.create();
-  // return qs.newCq(cqName, cqQuery, cqa, durable);
-  //
-  // }
 
   private Pool getClientPool(String host, int serverPort, boolean establishCallbackConnection) {
     PoolFactory pf = PoolManager.createFactory();
@@ -992,7 +957,8 @@ public class DurableClientTestCase implements Serializable {
     });
   }
 
-  private void createClientCache(Properties gemfireProperties, Boolean useSpecialProperties) {
+  private void createClientCache(Properties gemfireProperties, Boolean useSpecialProperties,
+                                 int redundancyLevel) {
     clientCacheRule.createClientCache(gemfireProperties);
     clientCache = clientCacheRule.getClientCache();
 
@@ -1003,6 +969,7 @@ public class DurableClientTestCase implements Serializable {
     pool = (PoolImpl) PoolManager.createFactory()
         .addServer(NetworkUtils.getServerHostName(), server1Port)
         .setSubscriptionEnabled(Boolean.TRUE)
+        .setSubscriptionRedundancy(redundancyLevel)
         .setSubscriptionAckInterval(1)
         .create("DurableClientReconnectDUnitTestPool");
 
