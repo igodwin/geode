@@ -190,7 +190,6 @@ public class AutoConnectionSourceDUnitTest extends LocatorTestBase {
     final String hostName = getServerHostName();
     VM locator0VM = VM.getVM(0);
     VM locator1VM = VM.getVM(1);
-    VM clientVM = VM.getVM(2);
     VM serverVM = VM.getVM(3);
 
     final int locator0Port = locator0VM.invoke("Start Locator1 ", () -> startLocator(hostName, ""));
@@ -225,7 +224,7 @@ public class AutoConnectionSourceDUnitTest extends LocatorTestBase {
     // stop one of the locators and ensure that the client can find and use a server
     locator0VM.invoke("Stop Locator", this::stopLocator);
 
-    await().until(() -> pool.getOnlineLocators().size() == 1);
+    await().untilAsserted(() -> assertThat(pool.getOnlineLocators().size()).isEqualTo(1));
 
     int serverPort = serverVM.invoke("Start BridgeServer",
         () -> startBridgeServer(null, getLocatorString(hostName, locator1Port)));
