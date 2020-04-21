@@ -124,7 +124,8 @@ public class AutoConnectionSourceDUnitTest extends LocatorTestBase {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(hostName, ""));
     vm1.invoke("StartBridgeClient", () -> startBridgeClient(null, hostName, locatorPort));
 
-    assertThatThrownBy(() -> putInVM(vm1)).hasRootCauseInstanceOf(NoAvailableServersException.class);
+    assertThatThrownBy(() -> putInVM(vm1))
+        .hasRootCauseInstanceOf(NoAvailableServersException.class);
   }
 
   @Test
