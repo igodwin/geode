@@ -17,7 +17,6 @@ package org.apache.geode.cache.client.internal;
 import static org.apache.geode.distributed.ConfigurationProperties.ENABLE_CLUSTER_CONFIGURATION;
 import static org.apache.geode.distributed.ConfigurationProperties.HTTP_SERVICE_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.LOCATORS;
-import static org.apache.geode.distributed.ConfigurationProperties.LOG_LEVEL;
 import static org.apache.geode.distributed.ConfigurationProperties.MCAST_PORT;
 import static org.apache.geode.distributed.ConfigurationProperties.START_LOCATOR;
 import static org.apache.geode.internal.inet.LocalHostUtil.getLocalHost;
@@ -63,7 +62,6 @@ import org.apache.geode.cache.client.NoAvailableServersException;
 import org.apache.geode.cache.client.Pool;
 import org.apache.geode.cache.client.PoolManager;
 import org.apache.geode.cache.server.CacheServer;
-import org.apache.geode.cache.server.ServerLoadProbe;
 import org.apache.geode.distributed.Locator;
 import org.apache.geode.distributed.internal.ServerLocation;
 import org.apache.geode.internal.AvailablePort;
@@ -72,7 +70,6 @@ import org.apache.geode.internal.cache.PoolFactoryImpl;
 import org.apache.geode.management.membership.ClientMembership;
 import org.apache.geode.management.membership.ClientMembershipEvent;
 import org.apache.geode.management.membership.ClientMembershipListenerAdapter;
-import org.apache.geode.test.dunit.LogWriterUtils;
 import org.apache.geode.test.dunit.VM;
 import org.apache.geode.test.dunit.rules.DistributedRestoreSystemProperties;
 import org.apache.geode.test.dunit.rules.DistributedRule;
@@ -172,16 +169,16 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   public void testDynamicallyFindBridgeServer() {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(""));
 
-    String locators = getLocatorString(hostname, locatorPort);
+    String locatorString = getLocatorString(locatorPort);
 
-    vm1.invoke("Start BridgeServer", () -> startCacheServer(null, locators));
+    vm1.invoke("Start BridgeServer", () -> startCacheServer(null, locatorString));
 
     vm2.invoke("StartBridgeClient",
         () -> createClientCache(null, hostname, locatorPort));
 
     putAndWaitForSuccess(vm2, REGION_NAME, KEY, VALUE);
 
-    vm3.invoke("Start BridgeServer", () -> startCacheServer(null, locators));
+    vm3.invoke("Start BridgeServer", () -> startCacheServer(null, locatorString));
 
     stopBridgeMemberVM(vm1);
 
@@ -197,20 +194,20 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     vm2.invoke("StartBridgeClient", () -> createClientCache(null, hostname, locator0Port));
 
     int locator1Port = vm1.invoke("Start Locator2 ",
-        () -> startLocator(getLocatorString(hostname, locator0Port)));
+        () -> startLocator(getLocatorString(locator0Port)));
 
     vm3.invoke("Start BridgeServer",
         () -> {
           int[] locatorPorts = new int[] {locator0Port, locator1Port};
-          StringBuffer stringBuffer = new StringBuffer();
+          StringBuilder stringBuilder = new StringBuilder();
           for (int i = 0; i < locatorPorts.length; i++) {
-            stringBuffer.append(hostname).append("[").append(locatorPorts[i]).append("]");
+            stringBuilder.append(hostname).append("[").append(locatorPorts[i]).append("]");
             if (i < locatorPorts.length - 1) {
-              stringBuffer.append(",");
+              stringBuilder.append(",");
             }
           }
 
-          return startCacheServer(null, stringBuffer.toString());
+          return startCacheServer(null, stringBuilder.toString());
         });
 
     putAndWaitForSuccess(vm2, REGION_NAME, KEY, VALUE);
@@ -224,7 +221,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   public void testClientDynamicallyDropsStoppedLocator() throws Exception {
     int locator0Port = vm0.invoke("Start Locator1 ", () -> startLocator(""));
     int locator1Port = vm1.invoke("Start Locator2 ",
-        () -> startLocator(getLocatorString(hostname, locator0Port)));
+        () -> startLocator(getLocatorString(locator0Port)));
     assertThat(locator0Port).isGreaterThan(0);
     assertThat(locator1Port).isGreaterThan(0);
 
@@ -249,12 +246,12 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     verifyLocatorsMatched(expectedLocators, pool.getOnlineLocators());
 
     // stop one of the locators and ensure that the client can find and use a server
-    vm0.invoke("Stop Locator", this::stopLocator);
+    vm0.invoke(this::stopLocator);
 
     await().untilAsserted(() -> assertThat(pool.getOnlineLocators().size()).isEqualTo(1));
 
     int serverPort = vm2.invoke("Start BridgeServer",
-        () -> startCacheServer(null, getLocatorString(hostname, locator1Port)));
+        () -> startCacheServer(null, getLocatorString(locator1Port)));
     assertThat(serverPort).isGreaterThan(0);
 
     verifyLocatorsMatched(initialLocators, pool.getLocators());
@@ -268,17 +265,16 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
             () -> ((Cache) remoteObjects.get(CACHE_KEY)).getRegion(REGION_NAME).put(KEY, VALUE))
                 .doesNotThrowAnyException());
     assertThat(getInVM(vm2, KEY)).isEqualTo(VALUE);
-
   }
 
   @Test
   public void testClientCanUseAnEmbeddedLocator() {
     int locatorPort = AvailablePort.getRandomAvailablePort(AvailablePort.SOCKET);
 
-    String locators = getLocatorString(hostname, locatorPort);
+    String locatorString = getLocatorString(locatorPort);
 
-    vm0.invoke("Start BridgeServer", () -> startCacheServerWithEmbeddedLocator(null, locators,
-        new String[] {REGION_NAME}, CacheServer.DEFAULT_LOAD_PROBE));
+    vm0.invoke("Start BridgeServer", () -> startCacheServerWithEmbeddedLocator(locatorString,
+        new String[] {REGION_NAME}));
 
     vm1.invoke("StartBridgeClient",
         () -> createClientCache(null, hostname, locatorPort));
@@ -292,15 +288,18 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   public void testClientFindsServerGroups() {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(""));
 
-    String locators = getLocatorString(hostname, locatorPort);
+    String locatorString = getLocatorString(locatorPort);
 
     vm1.invoke("Start BridgeServer", () -> {
-      CacheFactory cacheFactory = new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locators);
+      CacheFactory cacheFactory =
+          new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locatorString);
       Cache cache = cacheFactory.create();
+
       for (String regionName : new String[] {"A", "B"}) {
         cache.createRegionFactory(RegionShortcut.REPLICATE).setEnableSubscriptionConflation(true)
             .create(regionName);
       }
+
       CacheServer server = cache.addCacheServer();
       server.setPort(0);
       server.setGroups(new String[] {"group1", "group2"});
@@ -311,8 +310,10 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
       return server.getPort();
     });
+
     vm2.invoke("Start BridgeServer", () -> {
-      CacheFactory cacheFactory = new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locators);
+      CacheFactory cacheFactory =
+          new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locatorString);
       Cache cache = cacheFactory.create();
       for (String regionName : new String[] {"B", "C"}) {
         cache.createRegionFactory(RegionShortcut.REPLICATE).setEnableSubscriptionConflation(true)
@@ -366,7 +367,8 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     putInVM(vm3, "B", "key6", VALUE);
     assertThat(getInVM(vm2, "B", "key6")).isEqualTo(VALUE);
     vm1.invoke("Start BridgeServer", () -> {
-      CacheFactory cacheFactory = new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locators);
+      CacheFactory cacheFactory =
+          new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locatorString);
       Cache cache = cacheFactory.create();
       for (String regionName : new String[] {"A", "B"}) {
         cache.createRegionFactory(RegionShortcut.REPLICATE).setEnableSubscriptionConflation(true)
@@ -392,10 +394,10 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   public void testTwoServersInSameVM() {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(""));
 
-    String locators = getLocatorString(hostname, locatorPort);
+    String locatorString = getLocatorString(locatorPort);
 
     int serverPort1 =
-        vm1.invoke("Start Server", () -> startCacheServer(new String[] {"group1"}, locators));
+        vm1.invoke("Start Server", () -> startCacheServer(new String[] {"group1"}, locatorString));
     int serverPort2 =
         vm1.invoke("Start Server", () -> addCacheServer(new String[] {"group2"}));
 
@@ -415,12 +417,12 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     int locatorPort =
         vm0.invoke("Start Locator", () -> startLocator(""));
 
-    String locators = getLocatorString(hostname, locatorPort);
+    String lolocatorString = getLocatorString(locatorPort);
 
     // start a cache server with a listener
     addBridgeListener(vm1);
     int serverPort1 =
-        vm1.invoke("Start BridgeServer", () -> startCacheServer(null, locators));
+        vm1.invoke("Start BridgeServer", () -> startCacheServer(null, lolocatorString));
 
     // start a bridge client with a listener
     addBridgeListener(vm3);
@@ -450,7 +452,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
     // start another cache server and make sure it is detected by the client
     int serverPort2 =
-        vm2.invoke("Start BridgeServer", () -> startCacheServer(null, locators));
+        vm2.invoke("Start BridgeServer", () -> startCacheServer(null, lolocatorString));
 
     checkEndpoints(vm3, serverPort1, serverPort2);
     serverListener = (MyListener) vm1
@@ -631,17 +633,8 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     });
   }
 
-  private String getLocatorString(String hostname, int locatorPort) {
-    int[] locatorPorts = new int[] {locatorPort};
-    StringBuffer stringBuffer = new StringBuffer();
-    for (int i = 0; i < locatorPorts.length; i++) {
-      stringBuffer.append(hostname).append("[").append(locatorPorts[i]).append("]");
-      if (i < locatorPorts.length - 1) {
-        stringBuffer.append(",");
-      }
-    }
-
-    return stringBuffer.toString();
+  private String getLocatorString(int locatorPort) {
+    return hostname + "[" + locatorPort + "]";
   }
 
   private int addCacheServer(final String[] groups) throws IOException {
@@ -656,9 +649,8 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   private int startLocator(final String otherLocators) throws Exception {
     final int httpPort = AvailablePortHelper.getRandomAvailableTCPPort();
     Properties properties = new Properties();
-    properties.put(MCAST_PORT, String.valueOf(0));
+    properties.put(MCAST_PORT, "0");
     properties.put(LOCATORS, otherLocators);
-    properties.put(LOG_LEVEL, LogWriterUtils.getDUnitLogLevel());
     properties.put(ENABLE_CLUSTER_CONFIGURATION, "false");
     properties.put(HTTP_SERVICE_PORT, String.valueOf(httpPort));
     File logFile = new File("");
@@ -686,8 +678,8 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     return server.getPort();
   }
 
-  private int startCacheServerWithEmbeddedLocator(final String[] groups, final String locators,
-      final String[] regions, final ServerLoadProbe probe) throws IOException {
+  private int startCacheServerWithEmbeddedLocator(final String locators,
+      final String[] regions) throws IOException {
     Cache cache = new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locators)
         .set(START_LOCATOR, locators).create();
     for (String regionName : regions) {
@@ -695,8 +687,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
           .create(regionName);
     }
     CacheServer server = cache.addCacheServer();
-    server.setGroups(groups);
-    server.setLoadProbe(probe);
+    server.setLoadProbe(CacheServer.DEFAULT_LOAD_PROBE);
     server.setPort(0);
     server.start();
 
@@ -711,19 +702,20 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
   private void createClientCache(final String group, final String host, final int port,
       final String[] regions) {
-    PoolFactoryImpl poolFactory1 = new PoolFactoryImpl(null);
-    poolFactory1.addLocator(host, port).setServerGroup(group).setPingInterval(200)
-        .setSubscriptionEnabled(true).setSubscriptionRedundancy(-1);
-
     Cache cache = new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, "").create();
 
-    PoolFactoryImpl poolFactory2 = (PoolFactoryImpl) PoolManager.createFactory();
-    poolFactory2.init(poolFactory1.getPoolAttributes());
     LocatorDiscoveryCallback locatorCallback = new MyLocatorCallback();
-
     remoteObjects.put(CALLBACK_KEY, locatorCallback);
-    poolFactory2.setLocatorDiscoveryCallback(locatorCallback);
-    poolFactory2.create(POOL_NAME);
+
+    PoolFactoryImpl poolFactory = (PoolFactoryImpl) PoolManager.createFactory()
+        .addLocator(host, port)
+        .setServerGroup(group)
+        .setPingInterval(200)
+        .setSubscriptionEnabled(true)
+        .setSubscriptionRedundancy(-1);
+
+    poolFactory.setLocatorDiscoveryCallback(locatorCallback);
+    poolFactory.create(POOL_NAME);
 
     RegionFactory<Object, Object> regionFactory =
         cache.createRegionFactory(RegionShortcut.LOCAL).setPoolName(POOL_NAME);
