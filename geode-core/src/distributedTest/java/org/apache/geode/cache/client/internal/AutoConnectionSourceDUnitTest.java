@@ -93,10 +93,6 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   private static final String REGION_NAME = "A_REGION";
   private static final String POOL_NAME = "daPool";
   private static final Object CALLBACK_KEY = "callback";
-  /**
-   * A map for storing temporary objects in a remote VM so that they can be used between calls.
-   * Cleared after each test.
-   */
   private static final HashMap<Object, Object> remoteObjects = new HashMap<>();
 
   private String hostname;
