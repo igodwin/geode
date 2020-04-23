@@ -44,6 +44,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.After;
 import org.junit.Before;
@@ -467,6 +468,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     assertThat(clientListener.getCrashes()).isEqualTo(0);
     assertThat(clientListener.getDepartures()).isEqualTo(0);
     assertThat(clientListener.getJoins()).isEqualTo(1);
+
     resetBridgeListener(vm3);
 
     // stop the second cache server and make sure it is detected by the client
@@ -480,6 +482,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     assertThat(serverListener.getJoins()).isEqualTo(0);
     resetBridgeListener(vm1);
     waitForCrash(vm3);
+
     clientListener = (MyListener) vm3
         .invoke("Get membership listener", () -> remoteObjects.get(BRIDGE_LISTENER));
     assertThat(clientListener.getJoins()).isEqualTo(0);
@@ -622,7 +625,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   private void waitForCrash(VM vm) {
     vm.invoke("wait for crash", () -> {
       MyListener listener = (MyListener) remoteObjects.get(BRIDGE_LISTENER);
-      await().until(() -> listener.getCrashes() > 0);
+      await().timeout(30, TimeUnit.SECONDS).until(() -> listener.getCrashes() > 0);
     });
   }
 
@@ -735,6 +738,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     vm.invoke(() -> {
       Cache cache = (Cache) remoteObjects.remove(CACHE_KEY);
       cache.close();
+      await().until(() -> !cache.getDistributedSystem().isConnected());
       disconnectFromDS();
     });
   }
