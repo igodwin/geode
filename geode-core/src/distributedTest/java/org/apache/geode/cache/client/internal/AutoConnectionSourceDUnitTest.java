@@ -128,12 +128,12 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   }
 
   @Test
-  public void testDiscoverBridgeServers() {
+  public void testDiscoverCacheServers() {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(""));
 
     String locators = hostname + "[" + locatorPort + "]";
 
-    vm1.invoke("Start BridgeServer", () -> startCacheServer(null, locators));
+    vm1.invoke("Start CacheServer", () -> startCacheServer(null, locators));
 
     vm2.invoke("StartBridgeClient",
         () -> createClientCache(null, hostname, locatorPort));
@@ -158,7 +158,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   }
 
   @Test
-  public void testNoBridgeServer() {
+  public void testNoCacheServer() {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(""));
     vm1.invoke("StartBridgeClient", () -> createClientCache(null, hostname, locatorPort));
 
@@ -167,21 +167,21 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
   }
 
   @Test
-  public void testDynamicallyFindBridgeServer() {
+  public void testDynamicallyFindCacheServer() {
     int locatorPort = vm0.invoke("Start Locator", () -> startLocator(""));
 
     String locatorString = getLocatorString(locatorPort);
 
-    vm1.invoke("Start BridgeServer", () -> startCacheServer(null, locatorString));
+    vm1.invoke("Start CacheServer", () -> startCacheServer(null, locatorString));
 
     vm2.invoke("StartBridgeClient",
         () -> createClientCache(null, hostname, locatorPort));
 
     putAndWaitForSuccess(vm2, REGION_NAME, KEY, VALUE);
 
-    vm3.invoke("Start BridgeServer", () -> startCacheServer(null, locatorString));
+    vm3.invoke("Start CacheServer", () -> startCacheServer(null, locatorString));
 
-    stopBridgeMemberVM(vm1);
+    vm1.invoke(() -> closeCache());
 
     putAndWaitForSuccess(vm2, REGION_NAME, "key2", "value2");
 
@@ -197,7 +197,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     int locator1Port = vm1.invoke("Start Locator2 ",
         () -> startLocator(getLocatorString(locator0Port)));
 
-    vm3.invoke("Start BridgeServer",
+    vm3.invoke("Start CacheServer",
         () -> {
           int[] locatorPorts = new int[] {locator0Port, locator1Port};
           StringBuilder stringBuilder = new StringBuilder();
@@ -251,7 +251,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
     await().untilAsserted(() -> assertThat(pool.getOnlineLocators().size()).isEqualTo(1));
 
-    int serverPort = vm2.invoke("Start BridgeServer",
+    int serverPort = vm2.invoke("Start CacheServer",
         () -> startCacheServer(null, getLocatorString(locator1Port)));
     assertThat(serverPort).isGreaterThan(0);
 
@@ -274,7 +274,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
     String locatorString = getLocatorString(locatorPort);
 
-    vm0.invoke("Start BridgeServer", () -> startCacheServerWithEmbeddedLocator(locatorString,
+    vm0.invoke("Start CacheServer", () -> startCacheServerWithEmbeddedLocator(locatorString,
         new String[] {REGION_NAME}));
 
     vm1.invoke("StartBridgeClient",
@@ -291,7 +291,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
     String locatorString = getLocatorString(locatorPort);
 
-    vm1.invoke("Start BridgeServer", () -> {
+    vm1.invoke("Start CacheServer", () -> {
       CacheFactory cacheFactory =
           new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locatorString);
       Cache cache = cacheFactory.create();
@@ -312,7 +312,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
       return server.getPort();
     });
 
-    vm2.invoke("Start BridgeServer", () -> {
+    vm2.invoke("Start CacheServer", () -> {
       CacheFactory cacheFactory =
           new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locatorString);
       Cache cache = cacheFactory.create();
@@ -342,7 +342,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
       }).hasRootCauseInstanceOf(RegionDestroyedException.class);
     });
 
-    stopBridgeMemberVM(vm3);
+    vm3.invoke(() -> closeCache());
 
     vm3.invoke("StartBridgeClient", () -> createClientCache("group3", hostname,
         locatorPort, new String[] {"A", "B", "C"}));
@@ -356,7 +356,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     putInVM(vm3, "C", "key4", VALUE);
     assertThat(getInVM(vm2, "C", "key4")).isEqualTo(VALUE);
 
-    stopBridgeMemberVM(vm3);
+    vm3.invoke(() -> closeCache());
 
     vm3.invoke("StartBridgeClient", () -> createClientCache("group2", hostname,
         locatorPort, new String[] {"A", "B", "C"}));
@@ -364,10 +364,10 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     assertThat(getInVM(vm1, "B", "key5")).isEqualTo(VALUE);
     assertThat(getInVM(vm2, "B", "key5")).isEqualTo(VALUE);
 
-    stopBridgeMemberVM(vm1);
+    vm1.invoke(() -> closeCache());
     putInVM(vm3, "B", "key6", VALUE);
     assertThat(getInVM(vm2, "B", "key6")).isEqualTo(VALUE);
-    vm1.invoke("Start BridgeServer", () -> {
+    vm1.invoke("Start CacheServer", () -> {
       CacheFactory cacheFactory =
           new CacheFactory().set(MCAST_PORT, "0").set(LOCATORS, locatorString);
       Cache cache = cacheFactory.create();
@@ -385,7 +385,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
       return server.getPort();
     });
-    stopBridgeMemberVM(vm2);
+    vm2.invoke(() -> closeCache());
 
     putInVM(vm3, "B", "key7", VALUE);
     assertThat(getInVM(vm1, "B", "key7")).isEqualTo(VALUE);
@@ -406,7 +406,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
     checkEndpoints(vm2, serverPort2);
 
-    stopBridgeMemberVM(vm2);
+    vm2.invoke(() -> closeCache());
 
     vm2.invoke("Start Client", () -> createClientCache("group1", hostname, locatorPort));
 
@@ -418,12 +418,12 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     int locatorPort =
         vm0.invoke("Start Locator", () -> startLocator(""));
 
-    String lolocatorString = getLocatorString(locatorPort);
+    String locatorString = getLocatorString(locatorPort);
 
     // start a cache server with a listener
     addBridgeListener(vm1);
     int serverPort1 =
-        vm1.invoke("Start BridgeServer", () -> startCacheServer(null, lolocatorString));
+        vm1.invoke("Start CacheServer", () -> startCacheServer(null, locatorString));
 
     // start a bridge client with a listener
     addBridgeListener(vm3);
@@ -453,7 +453,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
 
     // start another cache server and make sure it is detected by the client
     int serverPort2 =
-        vm2.invoke("Start BridgeServer", () -> startCacheServer(null, lolocatorString));
+        vm2.invoke("Start CacheServer", () -> startCacheServer(null, locatorString));
 
     checkEndpoints(vm3, serverPort1, serverPort2);
     serverListener = (MyListener) vm1
@@ -472,7 +472,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     resetBridgeListener(vm3);
 
     // stop the second cache server and make sure it is detected by the client
-    stopBridgeMemberVM(vm2);
+    vm2.invoke(() -> closeCache());
 
     checkEndpoints(vm3, serverPort1);
     serverListener = (MyListener) vm1
@@ -490,7 +490,7 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     resetBridgeListener(vm3);
 
     // stop the client and make sure the cache server notices
-    stopBridgeMemberVM(vm3);
+    vm3.invoke(() -> closeCache());
     waitForDeparture(vm1);
     serverListener = (MyListener) vm1
         .invoke("Get membership listener", () -> remoteObjects.get(BRIDGE_LISTENER));
@@ -734,13 +734,11 @@ public class AutoConnectionSourceDUnitTest implements Serializable {
     locator.stop();
   }
 
-  private void stopBridgeMemberVM(VM vm) {
-    vm.invoke(() -> {
-      Cache cache = (Cache) remoteObjects.remove(CACHE_KEY);
-      cache.close();
-      await().until(() -> !cache.getDistributedSystem().isConnected());
-      disconnectFromDS();
-    });
+  private void closeCache() {
+    Cache cache = (Cache) remoteObjects.remove(CACHE_KEY);
+    cache.close();
+    await().until(() -> !cache.getDistributedSystem().isConnected());
+    disconnectFromDS();
   }
 
   static class MyListener extends ClientMembershipListenerAdapter implements Serializable {
